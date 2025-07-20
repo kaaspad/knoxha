@@ -1,0 +1,83 @@
+{
+    "config": {
+        "step": {
+            "user": {
+                "title": "Connect to Knox Chameleon64i",
+                "description": "Enter the connection details for your Knox Chameleon64i device.",
+                "data": {
+                    "host": "Host",
+                    "port": "Port"
+                }
+            },
+            "zones": {
+                "title": "Configure Zones",
+                "description": "Configure the zones you want to use. You can add as many zones as needed.\n\n{zones}",
+                "data": {
+                    "add_zone": "Add Zone",
+                    "configure_inputs": "Configure Inputs",
+                    "edit_zone": "Edit Zone",
+                    "delete_zone": "Delete Zone"
+                }
+            },
+            "add_zone": {
+                "title": "Add Zone",
+                "description": "Enter the zone details.",
+                "data": {
+                    "zone_id": "Zone ID (1-64)",
+                    "zone_name": "Zone Name"
+                }
+            },
+            "edit_zone": {
+                "title": "Edit Zone",
+                "description": "Edit the zone name.",
+                "data": {
+                    "zone_name": "Zone Name"
+                }
+            },
+            "inputs": {
+                "title": "Configure Inputs",
+                "description": "Configure the inputs you want to use. You can add as many inputs as needed.\n\n{inputs}",
+                "data": {
+                    "add_input": "Add Input",
+                    "back_to_zones": "Back to Zones",
+                    "finish": "Finish Configuration",
+                    "edit_input": "Edit Input",
+                    "delete_input": "Delete Input",
+                    "delete_inputt": "Delete Inputt"
+                }
+            },
+            "add_input": {
+                "title": "Add Input",
+                "description": "Enter the input details.",
+                "data": {
+                    "input_id": "Input ID (1-64)",
+                    "input_name": "Input Name"
+                }
+            },
+            "edit_input": {
+                "title": "Edit Input",
+                "description": "Edit the input name.",
+                "data": {
+                    "input_name": "Input Name"
+                }
+            },
+            "Delete Inputt": {
+                "title": "Associate Players with Inputs",
+                "description": "{message}"
+            }
+        },
+        "error": {
+            "cannot_connect": "Failed to connect to Knox Chameleon64i device",
+            "invalid_auth": "Invalid authentication",
+            "unknown": "Unexpected error",
+            "zone_already_configured": "This zone is already configured",
+            "input_already_configured": "This input is already configured",
+            "no_zones_to_delete": "No zones configured to delete",
+            "no_inputs_to_delete": "No inputs configured to delete",
+            "no_inputs_configured": "No inputs configured to associate players with. Please add inputs first."
+        },
+        "abort": {
+            "already_configured": "Device is already configured"
+        }
+    }
+} 
