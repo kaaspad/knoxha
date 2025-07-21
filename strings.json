@@ -9,91 +9,75 @@
                     "port": "Port"
                 }
             },
-            "zones": {
-                "title": "Configure Zones",
-                "description": "Configure the zones for your Knox Chameleon64i device.\n\n%zones%",
-                "data": {
-                    "add_zone": "Add a new zone",
-                    "edit_zone": "Edit a zone",
-                    "delete_zone": "Delete a zone",
-                    "inputs": "Configure inputs",
-                    "finish": "Finish Setup"
-                }
-            },
-            "add_zone": {
-                "title": "Add Zone",
-                "description": "Add a new zone to your Knox Chameleon64i device.",
-                "data": {
-                    "zone_id": "Zone ID",
-                    "zone_name": "Zone Name"
-                }
-            },
-            "edit_zone": {
-                "title": "Edit Zone",
-                "description": "Edit an existing zone.",
-                "data": {
-                    "zone_name": "Zone Name"
-                }
-            },
-            "delete_zone": {
-                "title": "Delete Zone",
-                "description": "Select a zone to delete.",
-                "data": {
-                    "delete_zone_id": "Zone to Delete"
-                }
-            },
-            "inputs": {
-                "title": "Configure Inputs",
-                "description": "Configure the inputs for your Knox Chameleon64i device.\n\n%inputs%",
-                "data": {
-                    "add_input": "Add a new input",
-                    "edit_input": "Edit an input",
-                    "delete_input": "Delete an input",
-                    "zones": "Back to Zones"
-                }
-            },
-            "add_input": {
-                "title": "Add Input",
-                "description": "Add a new input to your Knox Chameleon64i device.",
-                "data": {
-                    "input_id": "Input ID",
-                    "input_name": "Input Name"
-                }
-            },
-            "edit_input": {
-                "title": "Edit Input",
-                "description": "Edit an existing input.",
-                "data": {
-                    "input_name": "Input Name"
-                }
-            },
-            "delete_input": {
-                "title": "Delete Input",
-                "description": "Select an input to delete.",
-                "data": {
-                    "delete_input_id": "Input to Delete"
-                }
-            },
             "reconfigure": {
-                "title": "Reconfigure Knox Chameleon64i",
-                "description": "Choose what you want to reconfigure.",
+                "title": "Reconfigure Knox Chameleon64i Connection",
+                "description": "Update the connection settings for your Knox Chameleon64i device.",
                 "data": {
-                    "edit_zones": "Edit Zones",
-                    "edit_inputs": "Edit Inputs"
+                    "host": "Host",
+                    "port": "Port"
                 }
             }
         },
         "error": {
             "cannot_connect": "Failed to connect to Knox Chameleon64i device",
             "invalid_auth": "Invalid authentication",
-            "unknown": "Unexpected error",
-            "zone_already_configured": "Zone ID is already configured",
-            "input_already_configured": "Input ID is already configured",
-            "no_zones_to_delete": "No zones configured to delete",
-            "no_inputs_to_delete": "No inputs configured to delete"
+            "unknown": "Unexpected error"
         },
         "abort": {
-            "already_configured": "Device is already configured"
+            "already_configured": "Device is already configured",
+            "reconfigure_successful": "Connection settings updated successfully"
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "title": "Configure Knox Chameleon64i",
+                "description": "Configure zones and inputs for your Knox Chameleon64i device.\n\nCurrent zones:\n{current_zones}\n\nCurrent inputs:\n{current_inputs}",
+                "data": {
+                    "configure_zones": "Configure Zones",
+                    "configure_inputs": "Configure Inputs"
+                }
+            },
+            "zones": {
+                "title": "Configure Zones",
+                "description": "Current zones:\n{current_zones}\n\n{help_text}",
+                "data": {
+                    "zone_id_1": "Add Zone ID 1",
+                    "zone_name_1": "Zone Name 1",
+                    "zone_id_2": "Add Zone ID 2", 
+                    "zone_name_2": "Zone Name 2",
+                    "zone_id_3": "Add Zone ID 3",
+                    "zone_name_3": "Zone Name 3",
+                    "zone_id_4": "Add Zone ID 4",
+                    "zone_name_4": "Zone Name 4",
+                    "zone_id_5": "Add Zone ID 5",
+                    "zone_name_5": "Zone Name 5"
+                }
+            },
+            "inputs": {
+                "title": "Configure Inputs", 
+                "description": "Current inputs:\n{current_inputs}\n\n{help_text}",
+                "data": {
+                    "input_id_1": "Add Input ID 1",
+                    "input_name_1": "Input Name 1",
+                    "input_id_2": "Add Input ID 2",
+                    "input_name_2": "Input Name 2", 
+                    "input_id_3": "Add Input ID 3",
+                    "input_name_3": "Input Name 3",
+                    "input_id_4": "Add Input ID 4",
+                    "input_name_4": "Input Name 4",
+                    "input_id_5": "Add Input ID 5",
+                    "input_name_5": "Input Name 5"
+                }
+            }
+        },
+        "error": {
+            "zone_already_configured": "This zone is already configured",
+            "input_already_configured": "This input is already configured",
+            "zone_name_required": "Zone name is required when zone ID is selected",
+            "input_name_required": "Input name is required when input ID is selected",
+            "zone_id_required": "Zone ID is required when zone name is entered",
+            "input_id_required": "Input ID is required when input name is entered"
         }
     }
-} 
+}

@@ -7,7 +7,7 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 
@@ -36,6 +36,12 @@ class KnoxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 2
 
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry):
+        """Return the options flow."""
+        return KnoxOptionsFlowHandler(config_entry)
+
     def __init__(self) -> None:
         """Initialize the config flow."""
         _LOGGER.error("KnoxConfigFlow __init__ called!")
@@ -62,10 +68,16 @@ class KnoxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
                 await self.hass.async_add_executor_job(knox.disconnect)
 
-                # Store connection info and move to zone configuration
-                self._host = user_input[CONF_HOST]
-                self._port = user_input[CONF_PORT]
-                return await self.async_step_zones()
+                # Create entry with basic defaults - zones/inputs configured via options
+                return self.async_create_entry(
+                    title=f"Knox Chameleon64i ({user_input[CONF_HOST]})",
+                    data={
+                        CONF_HOST: user_input[CONF_HOST],
+                        CONF_PORT: user_input[CONF_PORT],
+                        CONF_ZONES: [],  # Start with no zones - configure via options
+                        CONF_INPUTS: [DEFAULT_INPUT],  # At least one default input
+                    },
+                )
 
             except Exception as err:
                 _LOGGER.error("Error connecting to Knox device: %s", err)
@@ -80,394 +92,301 @@ class KnoxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 }
             ),
             errors=errors,
-            last_step=False,
         )
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle reconfiguration - directly go to zones step."""
-        # Load existing config
+        """Handle reconfiguration of connection settings."""
         entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
-        if entry:
-            self._host = entry.data[CONF_HOST]
-            self._port = entry.data[CONF_PORT]
-            self._zones = entry.data.get(CONF_ZONES, [])
-            self._inputs = entry.data.get(CONF_INPUTS, [])
-        return await self.async_step_zones()
+        errors = {}
+
+        if user_input is not None:
+            try:
+                # Test new connection
+                knox = await self.hass.async_add_executor_job(
+                    get_knox,
+                    user_input[CONF_HOST],
+                    user_input[CONF_PORT],
+                )
+                await self.hass.async_add_executor_job(knox.disconnect)
+
+                # Update entry with new connection info, preserve zones/inputs
+                new_data = entry.data.copy()
+                new_data[CONF_HOST] = user_input[CONF_HOST]
+                new_data[CONF_PORT] = user_input[CONF_PORT]
+                
+                self.hass.config_entries.async_update_entry(entry, data=new_data)
+                await self.hass.config_entries.async_reload(entry.entry_id)
+                
+                return self.async_abort(reason="reconfigure_successful")
+
+            except Exception as err:
+                _LOGGER.error("Error connecting to Knox device: %s", err)
+                errors["base"] = "cannot_connect"
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_HOST, default=entry.data[CONF_HOST]): str,
+                    vol.Required(CONF_PORT, default=entry.data[CONF_PORT]): int,
+                }
+            ),
+            errors=errors,
+        )
+
+class KnoxOptionsFlowHandler(config_entries.OptionsFlow):
+    """Knox options flow."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Initialize options flow."""
+        self.config_entry = config_entry
+        self._zones = config_entry.data.get(CONF_ZONES, []).copy()
+        self._inputs = config_entry.data.get(CONF_INPUTS, []).copy()
+        self._editing_zone = None
+        self._editing_input = None
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Manage the options."""
+        if user_input is not None:
+            # Handle form choices
+            if user_input.get("configure_zones"):
+                return await self.async_step_zones()
+            elif user_input.get("configure_inputs"):
+                return await self.async_step_inputs()
+            
+            # Save the configuration and exit
+            new_data = self.config_entry.data.copy()
+            new_data[CONF_ZONES] = self._zones
+            new_data[CONF_INPUTS] = self._inputs
+            
+            self.hass.config_entries.async_update_entry(
+                self.config_entry, data=new_data
+            )
+            return self.async_create_entry(title="", data={})
+
+        # Build the configuration form
+        zones_text = "\n".join(
+            f"Zone {zone[CONF_ZONE_ID]}: {zone[CONF_ZONE_NAME]}"
+            for zone in self._zones
+        ) if self._zones else "No zones configured"
+        
+        inputs_text = "\n".join(
+            f"Input {input[CONF_INPUT_ID]}: {input[CONF_INPUT_NAME]}"
+            for input in self._inputs
+        ) if self._inputs else "Default input only"
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema({
+                vol.Required("configure_zones", default=False): bool,
+                vol.Required("configure_inputs", default=False): bool,
+            }),
+            description_placeholders={
+                "current_zones": zones_text,
+                "current_inputs": inputs_text,
+            },
+        )
 
     async def async_step_zones(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle zone configuration."""
+        """Configure zones."""
         if user_input is not None:
-            # Handle actions from the menu or form submission
-            if "add_zone" == user_input.get("next_step"):
-                return await self.async_step_add_zone()
+            # Process the form data
+            new_zones = self._zones.copy()
+            errors = {}
             
-            if "inputs" == user_input.get("next_step"):
-                return await self.async_step_inputs()
-
-            if "edit_zone" in user_input and user_input["edit_zone"]:
-                zone_id = int(user_input["edit_zone"])
-                self._editing_zone = next(
-                    (zone for zone in self._zones if zone[CONF_ZONE_ID] == zone_id),
-                    None
-                )
-                if self._editing_zone:
-                    return await self.async_step_edit_zone()
-
-            if "delete_zone" in user_input and user_input["delete_zone"]:
-                zone_id = int(user_input["delete_zone"])
-                self._zones = [zone for zone in self._zones if zone[CONF_ZONE_ID] != zone_id]
-                return await self.async_step_zones()
-
-            if "finish" in user_input:
-                return await self.async_step_finish()
-
-        # Define menu options for the zones step
-        _LOGGER.debug("async_step_zones: self._zones: %s", self._zones)
-        menu_options = {
-            "add_zone": "Add a new zone",
-            "inputs": "Configure inputs",
-            "finish": "Finish Setup",
-        }
-
-        # Add edit/delete options only if zones exist
-        if self._zones:
-            menu_options["edit_zone"] = "Edit a zone"
-            menu_options["delete_zone"] = "Delete a zone"
-        _LOGGER.debug("async_step_zones: final menu_options: %s", menu_options)
-
-        # Show current zones and options
-        return self.async_show_menu(
-            step_id="zones",
-            menu_options=menu_options,
-            description_placeholders={
-                "zones": "\n".join(
-                    f"Zone {zone[CONF_ZONE_ID]}: {zone[CONF_ZONE_NAME]}"
-                    for zone in self._zones
-                ) if self._zones else "No zones configured"
-            },
-        )
-
-    async def async_step_add_zone(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Handle adding a new zone."""
-        if user_input is not None:
-            zone_id = user_input[CONF_ZONE_ID]
-            zone_name = user_input[CONF_ZONE_NAME]
+            # Process up to 5 zone additions
+            for i in range(1, 6):
+                zone_id_key = f"zone_id_{i}"
+                zone_name_key = f"zone_name_{i}"
+                
+                zone_id = user_input.get(zone_id_key)
+                zone_name = user_input.get(zone_name_key, "").strip()
+                
+                if zone_id and zone_name:
+                    zone_id = int(zone_id)
+                    # Check for duplicates
+                    if any(zone[CONF_ZONE_ID] == zone_id for zone in new_zones):
+                        errors[zone_id_key] = "zone_already_configured"
+                    else:
+                        new_zones.append({
+                            CONF_ZONE_ID: zone_id,
+                            CONF_ZONE_NAME: zone_name
+                        })
+                elif zone_id and not zone_name:
+                    errors[zone_name_key] = "zone_name_required"
+                elif zone_name and not zone_id:
+                    errors[zone_id_key] = "zone_id_required"
             
-            # Check if zone ID is already configured
-            if any(zone[CONF_ZONE_ID] == zone_id for zone in self._zones):
-                return self.async_show_form(
-                    step_id="add_zone",
-                    data_schema=vol.Schema(
-                        {
-                            vol.Required(CONF_ZONE_ID): vol.All(
-                                vol.Coerce(int),
-                                vol.Range(min=1, max=64)
-                            ),
-                            vol.Required(CONF_ZONE_NAME): str,
-                        }
-                    ),
-                    errors={"base": "zone_already_configured"},
-                    last_step=False,
-                )
-
-            self._zones.append({
-                CONF_ZONE_ID: zone_id,
-                CONF_ZONE_NAME: zone_name,
-            })
-            return await self.async_step_zones()
-
-        return self.async_show_form(
-            step_id="add_zone",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_ZONE_ID): vol.All(
-                        vol.Coerce(int),
-                        vol.Range(min=1, max=64)
-                    ),
-                    vol.Required(CONF_ZONE_NAME): str,
-                }
-            ),
-            errors={},
-            last_step=False,
-        )
-
-    async def async_step_edit_zone(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Handle editing an existing zone."""
-        if user_input is not None:
-            zone_name = user_input[CONF_ZONE_NAME]
-            
-            # Update the zone name
+            # Handle deletions
+            zones_to_delete = []
             for zone in self._zones:
-                if zone[CONF_ZONE_ID] == self._editing_zone[CONF_ZONE_ID]:
-                    zone[CONF_ZONE_NAME] = zone_name
-                    break
+                delete_key = f"delete_zone_{zone[CONF_ZONE_ID]}"
+                if user_input.get(delete_key, False):
+                    zones_to_delete.append(zone[CONF_ZONE_ID])
             
-            self._editing_zone = None
-            return await self.async_step_zones()
+            # Remove deleted zones
+            new_zones = [zone for zone in new_zones if zone[CONF_ZONE_ID] not in zones_to_delete]
+            
+            if not errors:
+                # Sort zones by ID
+                new_zones.sort(key=lambda x: x[CONF_ZONE_ID])
+                self._zones = new_zones
+                return await self.async_step_init()
+            
+            # If there are errors, show the form again with error messages
+            return self._show_zones_form(errors)
+
+        return self._show_zones_form()
+
+    def _show_zones_form(self, errors=None):
+        """Show the zones configuration form."""
+        if errors is None:
+            errors = {}
+            
+        # Get available zone IDs (not already configured)
+        used_zone_ids = {zone[CONF_ZONE_ID] for zone in self._zones}
+        available_zone_ids = {str(i): f"Zone {i}" for i in range(1, 65) if i not in used_zone_ids}
+        
+        # Build the schema dynamically
+        schema_dict = {}
+        
+        # Show current zones with delete options
+        if self._zones:
+            for zone in self._zones:
+                delete_key = f"delete_zone_{zone[CONF_ZONE_ID]}"
+                schema_dict[vol.Optional(delete_key, default=False)] = bool
+        
+        # Add up to 5 new zone fields
+        for i in range(1, 6):
+            zone_id_key = f"zone_id_{i}"
+            zone_name_key = f"zone_name_{i}"
+            
+            if available_zone_ids:
+                schema_dict[vol.Optional(zone_id_key)] = vol.In(available_zone_ids)
+                schema_dict[vol.Optional(zone_name_key)] = str
+        
+        # Current zones display
+        current_zones = "\n".join(
+            f"Zone {zone[CONF_ZONE_ID]}: {zone[CONF_ZONE_NAME]}"
+            for zone in sorted(self._zones, key=lambda x: x[CONF_ZONE_ID])
+        ) if self._zones else "No zones configured"
 
         return self.async_show_form(
-            step_id="edit_zone",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_ZONE_NAME, default=self._editing_zone[CONF_ZONE_NAME]): str,
-                }
-            ),
-            errors={},
-            last_step=False,
-        )
-
-    async def async_step_delete_zone(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Handle deleting an existing zone."""
-        if user_input is not None:
-            zone_id_to_delete = int(user_input["delete_zone_id"])
-            self._zones = [zone for zone in self._zones if zone[CONF_ZONE_ID] != zone_id_to_delete]
-            return await self.async_step_zones()
-
-        # Display a form to confirm deletion, listing zones to delete
-        if not self._zones:
-            return self.async_show_form(step_id="zones", errors={"base": "no_zones_to_delete"})
-
-        return self.async_show_form(
-            step_id="delete_zone",
-            data_schema=vol.Schema(
-                {
-                    vol.Required("delete_zone_id"): vol.In(
-                        {str(zone[CONF_ZONE_ID]): f"{zone[CONF_ZONE_NAME]} (ID: {zone[CONF_ZONE_ID]})"
-                         for zone in self._zones}
-                    )
-                }
-            ),
+            step_id="zones",
+            data_schema=vol.Schema(schema_dict),
+            errors=errors,
             description_placeholders={
-                "zones_to_delete": "Select a zone to delete."
+                "current_zones": current_zones,
+                "help_text": "Select zone IDs from the dropdown and enter names. Check boxes to delete existing zones."
             },
-            last_step=False,
         )
 
     async def async_step_inputs(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle input configuration."""
-        _LOGGER.debug("async_step_inputs: self._inputs: %s", self._inputs)
+        """Configure inputs.""" 
         if user_input is not None:
-            if "add_input" == user_input.get("next_step"):
-                return await self.async_step_add_input()
+            # Process the form data
+            new_inputs = self._inputs.copy()
+            errors = {}
             
-            if "edit_input" in user_input and user_input["edit_input"]:
-                input_id = int(user_input["edit_input"])
-                self._editing_input = next(
-                    (input for input in self._inputs if input[CONF_INPUT_ID] == input_id),
-                    None
-                )
-                if self._editing_input:
-                    return await self.async_step_edit_input()
-
-            if "delete_input" in user_input and user_input["delete_input"]:
-                input_id = int(user_input["delete_input"])
-                self._inputs = [input for input in self._inputs if input[CONF_INPUT_ID] != input_id]
-                return await self.async_step_inputs()
-
-            if "zones" == user_input.get("next_step"):
-                return await self.async_step_zones()
-
-            if "finish" in user_input:
-                return await self.async_step_finish()
-
-        # Define menu options for the inputs step
-        menu_options = {
-            "add_input": "Add a new input",
-            "zones": "Back to Zones",
-            "finish": "Finish Setup",
-        }
-
-        # Add edit/delete options only if inputs exist
-        if self._inputs:
-            menu_options["edit_input"] = "Edit an input"
-            menu_options["delete_input"] = "Delete an input"
-        _LOGGER.debug("async_step_inputs: final menu_options: %s", menu_options)
-
-        # Show current inputs and options
-        return self.async_show_menu(
-            step_id="inputs",
-            menu_options=menu_options,
-            description_placeholders={
-                "inputs": "\n".join(
-                    f"Input {input[CONF_INPUT_ID]}: {input[CONF_INPUT_NAME]}"
-                    for input in self._inputs
-                ) if self._inputs else "No inputs configured"
-            },
-        )
-
-    async def async_step_add_input(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Handle adding a new input."""
-        if user_input is not None:
-            input_id = user_input[CONF_INPUT_ID]
-            input_name = user_input[CONF_INPUT_NAME]
-            
-            # Check if input ID is already configured
-            if any(input[CONF_INPUT_ID] == input_id for input in self._inputs):
-                return self.async_show_form(
-                    step_id="add_input",
-                    data_schema=vol.Schema(
-                        {
-                            vol.Required(CONF_INPUT_ID): vol.All(
-                                vol.Coerce(int),
-                                vol.Range(min=1, max=64)
-                            ),
-                            vol.Required(CONF_INPUT_NAME): str,
-                        }
-                    ),
-                    errors={"base": "input_already_configured"},
-                    last_step=False,
-                )
-
-            self._inputs.append({
-                CONF_INPUT_ID: input_id,
-                CONF_INPUT_NAME: input_name,
-            })
-            return await self.async_step_inputs()
-
-        return self.async_show_form(
-            step_id="add_input",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_INPUT_ID): vol.All(
-                        vol.Coerce(int),
-                        vol.Range(min=1, max=64)
-                    ),
-                    vol.Required(CONF_INPUT_NAME): str,
-                }
-            ),
-            errors={},
-            last_step=False,
-        )
-
-    async def async_step_edit_input(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Handle editing an existing input."""
-        if user_input is not None:
-            input_name = user_input[CONF_INPUT_NAME]
-            
-            # Update the input name
-            for input in self._inputs:
-                if input[CONF_INPUT_ID] == self._editing_input[CONF_INPUT_ID]:
-                    input[CONF_INPUT_NAME] = input_name
-                    break
-            
-            self._editing_input = None
-            return await self.async_step_inputs()
-
-        return self.async_show_form(
-            step_id="edit_input",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_INPUT_NAME, default=self._editing_input[CONF_INPUT_NAME]): str,
-                }
-            ),
-            errors={},
-            last_step=False,
-        )
-
-    async def async_step_delete_input(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Handle deleting an existing input."""
-        if user_input is not None:
-            input_id_to_delete = int(user_input["delete_input_id"])
-            self._inputs = [input for input in self._inputs if input[CONF_INPUT_ID] != input_id_to_delete]
-            return await self.async_step_inputs()
-
-        # Display a form to confirm deletion, listing inputs to delete
-        if not self._inputs:
-            return self.async_show_form(step_id="inputs", errors={"base": "no_inputs_to_delete"})
-
-        return self.async_show_form(
-            step_id="delete_input",
-            data_schema=vol.Schema(
-                {
-                    vol.Required("delete_input_id"): vol.In(
-                        {str(input[CONF_INPUT_ID]): f"{input[CONF_INPUT_NAME]} (ID: {input[CONF_INPUT_ID]})"
-                         for input in self._inputs}
-                    )
-                }
-            ),
-            description_placeholders={
-                "inputs_to_delete": "Select an input to delete."
-            },
-            last_step=False,
-        )
-
-    async def async_step_finish(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Handle the finish step."""
-        _LOGGER.debug("*** ENTRY async_step_finish. user_input: %s", user_input)
-        if user_input is not None:
-            _LOGGER.debug("async_step_finish: user_input is not None, proceeding to save.")
-            # Ensure at least one default input if none are configured
-            if not self._inputs:
-                self._inputs.append(DEFAULT_INPUT)
-
-            # Create or update the config entry
-            data = {
-                CONF_HOST: self._host,
-                CONF_PORT: self._port,
-                CONF_ZONES: self._zones,
-                CONF_INPUTS: self._inputs,
-            }
-            _LOGGER.debug("async_step_finish: Data to save: %s", data)
-            
-            if self.context.get("source") == config_entries.SOURCE_RECONFIGURE:
-                _LOGGER.debug("async_step_finish: Reconfiguring existing entry.")
-                # Get the existing entry
-                entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
-                if entry is None:
-                    _LOGGER.error("async_step_finish: Entry not found during reconfigure.")
-                    return self.async_abort(reason="entry_not_found")
+            # Process up to 5 input additions
+            for i in range(1, 6):
+                input_id_key = f"input_id_{i}"
+                input_name_key = f"input_name_{i}"
                 
-                # Update the existing entry
-                self.hass.config_entries.async_update_entry(entry, data=data)
-                _LOGGER.debug("async_step_finish: Entry updated successfully.")
+                input_id = user_input.get(input_id_key)
+                input_name = user_input.get(input_name_key, "").strip()
+                
+                if input_id and input_name:
+                    input_id = int(input_id)
+                    # Check for duplicates
+                    if any(input[CONF_INPUT_ID] == input_id for input in new_inputs):
+                        errors[input_id_key] = "input_already_configured"
+                    else:
+                        new_inputs.append({
+                            CONF_INPUT_ID: input_id,
+                            CONF_INPUT_NAME: input_name
+                        })
+                elif input_id and not input_name:
+                    errors[input_name_key] = "input_name_required"
+                elif input_name and not input_id:
+                    errors[input_id_key] = "input_id_required"
+            
+            # Handle deletions
+            inputs_to_delete = []
+            for input in self._inputs:
+                delete_key = f"delete_input_{input[CONF_INPUT_ID]}"
+                if user_input.get(delete_key, False):
+                    inputs_to_delete.append(input[CONF_INPUT_ID])
+            
+            # Remove deleted inputs
+            new_inputs = [input for input in new_inputs if input[CONF_INPUT_ID] not in inputs_to_delete]
+            
+            # Ensure at least default input if all deleted
+            if not new_inputs:
+                new_inputs = [DEFAULT_INPUT]
+            
+            if not errors:
+                # Sort inputs by ID
+                new_inputs.sort(key=lambda x: x[CONF_INPUT_ID])
+                self._inputs = new_inputs
+                return await self.async_step_init()
+            
+            # If there are errors, show the form again with error messages
+            return self._show_inputs_form(errors)
 
-                # Trigger a reload of the integration to apply changes
-                await self.hass.config_entries.async_reload(entry.entry_id)
-                _LOGGER.debug("async_step_finish: Integration reloaded, aborting flow with success.")
-                return self.async_abort(reason="reconfigure_successful")
-            else:
-                _LOGGER.debug("async_step_finish: Creating new entry.")
-                return self.async_create_entry(
-                    title=DEFAULT_NAME,
-                    data=data,
-                )
+        return self._show_inputs_form()
 
-        # If we get here, show the finish form (first time entering async_step_finish for this flow)
-        _LOGGER.debug("async_step_finish: Showing finish form.")
+    def _show_inputs_form(self, errors=None):
+        """Show the inputs configuration form."""
+        if errors is None:
+            errors = {}
+            
+        # Get available input IDs (not already configured)
+        used_input_ids = {input[CONF_INPUT_ID] for input in self._inputs}
+        available_input_ids = {str(i): f"Input {i}" for i in range(1, 65) if i not in used_input_ids}
+        
+        # Build the schema dynamically
+        schema_dict = {}
+        
+        # Show current inputs with delete options (except default input)
+        if self._inputs:
+            for input in self._inputs:
+                # Don't allow deletion of default input if it's the only one
+                if len(self._inputs) > 1 or input[CONF_INPUT_ID] != DEFAULT_INPUT[CONF_INPUT_ID]:
+                    delete_key = f"delete_input_{input[CONF_INPUT_ID]}"
+                    schema_dict[vol.Optional(delete_key, default=False)] = bool
+        
+        # Add up to 5 new input fields
+        for i in range(1, 6):
+            input_id_key = f"input_id_{i}"
+            input_name_key = f"input_name_{i}"
+            
+            if available_input_ids:
+                schema_dict[vol.Optional(input_id_key)] = vol.In(available_input_ids)
+                schema_dict[vol.Optional(input_name_key)] = str
+        
+        # Current inputs display
+        current_inputs = "\n".join(
+            f"Input {input[CONF_INPUT_ID]}: {input[CONF_INPUT_NAME]}"
+            for input in sorted(self._inputs, key=lambda x: x[CONF_INPUT_ID])
+        ) if self._inputs else "No inputs configured"
+
         return self.async_show_form(
-            step_id="finish",
-            data_schema=vol.Schema({vol.Required("submit_changes", default=True): bool}),
+            step_id="inputs",
+            data_schema=vol.Schema(schema_dict),
+            errors=errors,
             description_placeholders={
-                "zones": "\n".join(
-                    f"Zone {zone[CONF_ZONE_ID]}: {zone[CONF_ZONE_NAME]}"
-                    for zone in self._zones
-                ) if self._zones else "No zones configured",
-                "inputs": "\n".join(
-                    f"Input {input[CONF_INPUT_ID]}: {input[CONF_INPUT_NAME]}"
-                    for input in self._inputs
-                ) if self._inputs else "No inputs configured",
+                "current_inputs": current_inputs,
+                "help_text": "Select input IDs from the dropdown and enter names. Check boxes to delete existing inputs."
             },
-            last_step=True,
         )
 
 class CannotConnect(HomeAssistantError):
