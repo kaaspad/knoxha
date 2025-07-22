@@ -168,6 +168,18 @@ async def async_setup_entry(
         },
         "async_setup_zone",
     )
+    
+    platform.async_register_entity_service(
+        "knox_test_service",
+        {vol.Optional("test_message", default="Hello from test service"): str},
+        "async_test_service",
+    )
+    
+    platform.async_register_entity_service(
+        "knox_raw_test",
+        {},
+        "async_raw_test",
+    )
 
     return True
 
@@ -845,8 +857,15 @@ class KnoxMediaPlayer(MediaPlayerEntity):
             
         _LOGGER.info("=== ZONE DIAGNOSIS END ===")
         
+    async def async_test_service(self, test_message: str = "Hello from test service") -> None:
+        """Simple test service to verify service registration works."""
+        _LOGGER.warning("TEST SERVICE CALLED: %s for zone %d (%s)", test_message, self._zone_id, self._zone_name)
+        _LOGGER.error("TEST SERVICE CALLED: %s for zone %d (%s)", test_message, self._zone_id, self._zone_name)
+        print(f"TEST SERVICE CALLED: {test_message} for zone {self._zone_id} ({self._zone_name})")
+        
     async def async_setup_zone(self, input_number: int, volume_level: int = 20) -> None:
         """Setup and configure a Knox zone with input, volume, and unmute."""
+        _LOGGER.warning("=== ZONE SETUP START for Zone %d (%s) ===", self._zone_id, self._zone_name)
         _LOGGER.info("=== ZONE SETUP START for Zone %d (%s) ===", self._zone_id, self._zone_name)
         _LOGGER.info("SETUP: Configuring zone %d with input %d, volume %d", self._zone_id, input_number, volume_level)
         
@@ -941,5 +960,31 @@ class KnoxMediaPlayer(MediaPlayerEntity):
                 
         except Exception as err:
             _LOGGER.error("SETUP: Error during zone setup: %s", err)
+            _LOGGER.warning("SETUP: Error during zone setup: %s", err)
             
+        _LOGGER.warning("=== ZONE SETUP END ===")
         _LOGGER.info("=== ZONE SETUP END ===")
+        
+    async def async_raw_test(self) -> None:
+        """Send raw commands to force audio setup."""
+        _LOGGER.warning("RAW TEST: Starting for zone %d", self._zone_id)
+        
+        try:
+            commands = [
+                (f"B{self._zone_id:02d}01", "Set input 1"),  # Route input 1 to zone 28
+                (f"$V{self._zone_id:02d}15", "Set volume 15"),  # Set volume to 15 (loud)
+                (f"$M{self._zone_id:02d}0", "Unmute"),  # Unmute
+            ]
+            
+            for command, description in commands:
+                _LOGGER.warning("RAW TEST: %s - Command: %s", description, command)
+                response = await self._hass.async_add_executor_job(
+                    self._knox._send_command, command
+                )
+                _LOGGER.warning("RAW TEST: Response: %s", repr(response))
+                await asyncio.sleep(1)
+                
+            _LOGGER.warning("RAW TEST: All commands sent. Check if you hear audio now.")
+            
+        except Exception as err:
+            _LOGGER.error("RAW TEST: Error: %s", err)

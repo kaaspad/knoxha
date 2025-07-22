@@ -51,6 +51,24 @@ knox_test_all_functions:
           max: 63
           mode: box
 
+knox_test_service:
+  name: Knox Test Service  
+  description: Simple test to verify service registration works
+  fields:
+    entity_id:
+      description: The Knox media player entity
+      example: "media_player.pool"
+      required: true
+      selector:
+        entity:
+          domain: media_player
+    test_message:
+      description: Test message to log
+      default: "Hello from test service"
+      required: false
+      selector:
+        text:
+
 knox_get_device_info:
   name: Knox Get Device Info
   description: Get detailed device information and current state
@@ -129,6 +147,24 @@ knox_fix_audio:
           max: 63
           mode: box
 
+knox_test_service:
+  name: Knox Test Service  
+  description: Simple test to verify service registration works
+  fields:
+    entity_id:
+      description: The Knox media player entity
+      example: "media_player.pool"
+      required: true
+      selector:
+        entity:
+          domain: media_player
+    test_message:
+      description: Test message to log
+      default: "Hello from test service"
+      required: false
+      selector:
+        text:
+
 knox_diagnose_zone:
   name: Knox Diagnose Zone Issues
   description: Comprehensive diagnosis of zone audio problems
@@ -170,3 +206,21 @@ knox_setup_zone:
           min: 0
           max: 63
           mode: box
+
+knox_test_service:
+  name: Knox Test Service  
+  description: Simple test to verify service registration works
+  fields:
+    entity_id:
+      description: The Knox media player entity
+      example: "media_player.pool"
+      required: true
+      selector:
+        entity:
+          domain: media_player
+    test_message:
+      description: Test message to log
+      default: "Hello from test service"
+      required: false
+      selector:
+        text:
