@@ -153,6 +153,12 @@ async def async_setup_entry(
         {vol.Optional("test_volume", default=16): vol.All(vol.Coerce(int), vol.Range(min=0, max=63))},
         "async_fix_audio",
     )
+    
+    platform.async_register_entity_service(
+        "knox_diagnose_zone",
+        {},
+        "async_diagnose_zone",
+    )
 
     return True
 
@@ -179,10 +185,10 @@ class KnoxMediaPlayer(MediaPlayerEntity):
         self._debug_polling_interval = 30  # seconds
         self._debug_cancel_polling = None
 
-        # Initialize _attr_ properties directly
+        # Initialize _attr_ properties directly  
         self._attr_state = MediaPlayerState.OFF
-        self._attr_volume_level = 0.0
-        self._attr_is_volume_muted = True
+        self._attr_volume_level = 0.5  # Start at 50% instead of 0% (silent)
+        self._attr_is_volume_muted = False  # Start unmuted, will be updated from device
 
         if self._inputs:
             self._attr_source = self._inputs[0][CONF_INPUT_NAME]
@@ -733,3 +739,99 @@ class KnoxMediaPlayer(MediaPlayerEntity):
                 
         except Exception as err:
             _LOGGER.error("AUDIO FIX: Error during audio fix: %s", err)
+            
+    async def async_diagnose_zone(self) -> None:
+        """Comprehensive diagnosis of zone audio problems."""
+        _LOGGER.info("=== ZONE DIAGNOSIS START for Zone %d (%s) ===", self._zone_id, self._zone_name)
+        
+        try:
+            # Current HA state
+            _LOGGER.info("DIAGNOSIS: Home Assistant State:")
+            _LOGGER.info("  - HA Volume Level: %.2f (0.0=quiet, 1.0=loud)", self._attr_volume_level)
+            _LOGGER.info("  - HA Muted: %s", self._attr_is_volume_muted)
+            _LOGGER.info("  - HA State: %s", self._attr_state)
+            _LOGGER.info("  - HA Source: %s", self._attr_source)
+            
+            # Test all raw commands
+            _LOGGER.info("DIAGNOSIS: Testing Raw Device Commands:")
+            
+            # Test volume query
+            _LOGGER.info("DIAGNOSIS: 1. Testing volume query ($D%02d)...", self._zone_id)
+            vol_response = await self._hass.async_add_executor_job(
+                self._knox._send_command, f"$D{self._zone_id:02d}"
+            )
+            _LOGGER.info("  Raw volume response: %s", repr(vol_response))
+            
+            # Test crosspoint query  
+            _LOGGER.info("DIAGNOSIS: 2. Testing crosspoint query (D%02d)...", self._zone_id)
+            cp_response = await self._hass.async_add_executor_job(
+                self._knox._send_command, f"D{self._zone_id:02d}"
+            )
+            _LOGGER.info("  Raw crosspoint response: %s", repr(cp_response))
+            
+            # Test setting volume to 20 (should be audible)
+            _LOGGER.info("DIAGNOSIS: 3. Testing volume set to 20 ($V%02d20)...", self._zone_id) 
+            set_vol_response = await self._hass.async_add_executor_job(
+                self._knox._send_command, f"$V{self._zone_id:02d}20"
+            )
+            _LOGGER.info("  Set volume response: %s", repr(set_vol_response))
+            
+            # Test unmute
+            _LOGGER.info("DIAGNOSIS: 4. Testing unmute ($M%02d0)...", self._zone_id)
+            unmute_response = await self._hass.async_add_executor_job(
+                self._knox._send_command, f"$M{self._zone_id:02d}0"
+            )
+            _LOGGER.info("  Unmute response: %s", repr(unmute_response))
+            
+            # Test input setting (Input 1 = IL Sonos)
+            _LOGGER.info("DIAGNOSIS: 5. Testing input set to 1 (B%02d01)...", self._zone_id)
+            input_response = await self._hass.async_add_executor_job(
+                self._knox._send_command, f"B{self._zone_id:02d}01"
+            )
+            _LOGGER.info("  Set input response: %s", repr(input_response))
+            
+            # Wait and re-check state
+            await asyncio.sleep(2)
+            _LOGGER.info("DIAGNOSIS: 6. Re-checking device state...")
+            
+            # Check final volume
+            final_volume = await self._hass.async_add_executor_job(
+                self._knox.get_volume, self._zone_id
+            )
+            final_mute = await self._hass.async_add_executor_job(
+                self._knox.get_mute, self._zone_id
+            )
+            final_input = await self._hass.async_add_executor_job(
+                self._knox.get_input, self._zone_id
+            )
+            
+            _LOGGER.info("DIAGNOSIS: Final Device State:")
+            _LOGGER.info("  - Device Volume: %s (0=loudest, 63=quietest, -1=not set)", final_volume)
+            _LOGGER.info("  - Device Muted: %s (True=muted, False=unmuted)", final_mute) 
+            _LOGGER.info("  - Device Input: %s (should be 1 for IL Sonos)", final_input)
+            
+            # Recommendations
+            _LOGGER.info("DIAGNOSIS: Recommendations:")
+            if final_volume == -1 or final_volume is None:
+                _LOGGER.warning("  ❌ PROBLEM: Volume is not set (-1) or unreadable")
+                _LOGGER.info("     → Try: Set volume manually via Knox device")
+            elif final_volume > 40:
+                _LOGGER.warning("  ⚠️  PROBLEM: Volume %d is very quiet (>40)", final_volume)
+                _LOGGER.info("     → Try: Lower number for louder audio")
+            else:
+                _LOGGER.info("  ✅ Volume %d should be audible", final_volume)
+                
+            if final_mute is True:
+                _LOGGER.warning("  ❌ PROBLEM: Device is muted")
+            else:
+                _LOGGER.info("  ✅ Device is unmuted")
+                
+            if final_input != 1 and final_input != 2:
+                _LOGGER.warning("  ❌ PROBLEM: Input %s is not 1 (IL Sonos) or 2 (US Sonos)", final_input)
+            else:
+                _LOGGER.info("  ✅ Input %s is configured", final_input)
+                
+        except Exception as err:
+            _LOGGER.error("DIAGNOSIS: Error during diagnosis: %s", err)
+            
+        _LOGGER.info("=== ZONE DIAGNOSIS END ===")

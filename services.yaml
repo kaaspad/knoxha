@@ -128,3 +128,15 @@ knox_fix_audio:
           min: 0
           max: 63
           mode: box
+
+knox_diagnose_zone:
+  name: Knox Diagnose Zone Issues
+  description: Comprehensive diagnosis of zone audio problems
+  fields:
+    entity_id:
+      description: The Knox media player entity
+      example: "media_player.pool"
+      required: true
+      selector:
+        entity:
+          domain: media_player
