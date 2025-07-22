@@ -192,6 +192,12 @@ async def async_setup_entry(
         {},
         "async_revert_test",
     )
+    
+    platform.async_register_entity_service(
+        "knox_basic_test",
+        {},
+        "async_basic_test",
+    )
 
     return True
 
@@ -321,6 +327,7 @@ class KnoxMediaPlayer(MediaPlayerEntity):
     async def async_set_volume_level(self, volume: float) -> None:
         """Set the volume level."""
         try:
+            _LOGGER.error("VOLUME CHANGE: User setting volume %.2f for zone %d", volume, self._zone_id)
             _LOGGER.debug("DEBUG: Setting volume level %.2f for zone %d", volume, self._zone_id)
             # Convert volume (0-1) to Knox scale (0-63)
             # volume is 0-1 from HA, where 0 is lowest and 1 is highest
@@ -342,11 +349,13 @@ class KnoxMediaPlayer(MediaPlayerEntity):
     async def async_mute_volume(self, mute: bool) -> None:
         """Mute or unmute the zone."""
         try:
-            await self._hass.async_add_executor_job(
+            _LOGGER.error("MUTE CHANGE: User %s zone %d", "muting" if mute else "unmuting", self._zone_id)
+            result = await self._hass.async_add_executor_job(
                 self._knox.set_mute,
                 self._zone_id,
                 mute,
             )
+            _LOGGER.error("MUTE CHANGE: Knox returned: %s", result)
             self._attr_is_volume_muted = mute # Optimistically update internal state
             self._attr_state = MediaPlayerState.OFF if mute else MediaPlayerState.ON # Optimistically update internal state
             self.async_write_ha_state()
@@ -356,6 +365,7 @@ class KnoxMediaPlayer(MediaPlayerEntity):
     async def async_select_source(self, source: str) -> None:
         """Select the input source."""
         try:
+            _LOGGER.error("SOURCE CHANGE: User selecting source '%s' for zone %d", source, self._zone_id)
             _LOGGER.debug("DEBUG: Selecting source '%s' for zone %d", source, self._zone_id)
             _LOGGER.debug("DEBUG: Available inputs: %s", self._inputs)
             
@@ -1119,3 +1129,57 @@ class KnoxMediaPlayer(MediaPlayerEntity):
             
         except Exception as err:
             _LOGGER.error("REVERT TEST: Error: %s", err)
+            
+    async def async_basic_test(self) -> None:
+        """Basic connectivity and command test."""
+        _LOGGER.error("=== BASIC TEST START for Zone %d ===", self._zone_id)
+        
+        try:
+            # Test 1: Basic connectivity
+            _LOGGER.error("TEST 1: Knox connection info:")
+            _LOGGER.error("  Host: %s, Port: %d, Connected: %s", 
+                         self._knox._host, self._knox._port, self._knox._connected)
+            
+            # Test 2: Simple command
+            _LOGGER.error("TEST 2: Simple ping command")
+            ping_response = await self._hass.async_add_executor_job(
+                self._knox._send_command, "?"
+            )
+            _LOGGER.error("  Ping response: %s", repr(ping_response))
+            
+            # Test 3: Current HA state
+            _LOGGER.error("TEST 3: Current HA state:")
+            _LOGGER.error("  Volume: %.2f, Muted: %s, State: %s, Source: %s",
+                         self._attr_volume_level, self._attr_is_volume_muted, 
+                         self._attr_state, self._attr_source)
+            
+            # Test 4: Force volume commands
+            _LOGGER.error("TEST 4: Forcing volume commands...")
+            commands = [
+                f"B{self._zone_id:02d}01",  # Set input 1
+                f"$V{self._zone_id:02d}10",  # Set volume 10 (very loud)
+                f"$M{self._zone_id:02d}0",   # Unmute
+                f"B{self._zone_id:02d}02",  # Set input 2  
+                f"$V{self._zone_id:02d}05",  # Set volume 5 (extremely loud)
+            ]
+            
+            for cmd in commands:
+                _LOGGER.error("  Sending: %s", cmd)
+                resp = await self._hass.async_add_executor_job(
+                    self._knox._send_command, cmd
+                )
+                _LOGGER.error("  Response: %s", repr(resp))
+                await asyncio.sleep(0.5)
+                
+            # Test 5: Check if anything changed
+            _LOGGER.error("TEST 5: Checking device state after commands...")
+            final_vol = await self._hass.async_add_executor_job(
+                self._knox._send_command, f"$D{self._zone_id:02d}"
+            )
+            _LOGGER.error("  Final device state: %s", repr(final_vol))
+            
+            _LOGGER.error("=== BASIC TEST END - CHECK ALL ZONES FOR AUDIO ===")
+            _LOGGER.error("🔊 LISTEN FOR AUDIO FROM ANY ZONE - audio might be going to wrong output!")
+            
+        except Exception as err:
+            _LOGGER.error("BASIC TEST ERROR: %s", err)
