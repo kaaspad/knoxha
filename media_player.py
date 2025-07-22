@@ -186,6 +186,12 @@ async def async_setup_entry(
         {},
         "async_find_real_zones",
     )
+    
+    platform.async_register_entity_service(
+        "knox_revert_test",
+        {},
+        "async_revert_test",
+    )
 
     return True
 
@@ -1048,3 +1054,68 @@ class KnoxMediaPlayer(MediaPlayerEntity):
                 
         except Exception as err:
             _LOGGER.error("ZONE FINDER: Error: %s", err)
+            
+    async def async_revert_test(self) -> None:
+        """Test what the old broken parsing might have returned."""
+        _LOGGER.warning("REVERT TEST: Testing old vs new parsing for zone %d", self._zone_id)
+        
+        try:
+            # Get the current device response
+            vol_response = await self._hass.async_add_executor_job(
+                self._knox._send_command, f"$D{self._zone_id:02d}"
+            )
+            _LOGGER.warning("REVERT TEST: Raw volume response: %s", repr(vol_response))
+            
+            # Test old broken parsing logic (what it USED to return)
+            data = vol_response
+            _LOGGER.warning("REVERT TEST: Testing old parsing logic...")
+            
+            # Simulate old broken parsing - looking for 'VOLUME' keyword that doesn't exist
+            old_volume = None
+            if "VOLUME" in data.upper():
+                _LOGGER.warning("REVERT TEST: Old parsing - found VOLUME keyword")
+                # Old logic would have failed here and maybe returned None or default
+                old_volume = None
+            else:
+                _LOGGER.warning("REVERT TEST: Old parsing - NO VOLUME keyword found")
+                # Maybe old logic had a fallback that returned a default value?
+                # Let's see if there were any numbers it might have grabbed
+                import re
+                numbers = re.findall(r'\d+', data)
+                _LOGGER.warning("REVERT TEST: Old parsing might have grabbed numbers: %s", numbers)
+                if numbers:
+                    old_volume = int(numbers[0])  # Maybe it grabbed the first number?
+                    
+            # Test current new parsing
+            new_volume = None
+            volume_match = re.search(r'V:(-?\d+)', data)
+            if volume_match:
+                vol_val = int(volume_match.group(1))
+                if vol_val >= 0:
+                    new_volume = vol_val
+                else:
+                    new_volume = 32  # Our default
+                    
+            _LOGGER.warning("REVERT TEST: OLD parsing result: %s", old_volume)
+            _LOGGER.warning("REVERT TEST: NEW parsing result: %s", new_volume)
+            
+            # Try setting volume the OLD way - just send a fixed volume
+            _LOGGER.warning("REVERT TEST: Setting volume the old way (fixed volume 25)...")
+            old_way_response = await self._hass.async_add_executor_job(
+                self._knox._send_command, f"$V{self._zone_id:02d}25"
+            )
+            _LOGGER.warning("REVERT TEST: Old way volume response: %s", repr(old_way_response))
+            
+            # Try different routing query formats
+            _LOGGER.warning("REVERT TEST: Trying different query formats...")
+            
+            # Try full routing table
+            full_table = await self._hass.async_add_executor_job(
+                self._knox._send_command, "D*"  # Query all routes
+            )
+            _LOGGER.warning("REVERT TEST: Full routing table (D*): %s", repr(full_table))
+            
+            _LOGGER.warning("REVERT TEST: 🔊 Check if setting volume 25 made any audio appear!")
+            
+        except Exception as err:
+            _LOGGER.error("REVERT TEST: Error: %s", err)
