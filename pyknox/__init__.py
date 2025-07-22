@@ -162,10 +162,36 @@ class Knox:
             
             if result["success"] and "data" in result:
                 # Parse the crosspoint data to extract input number
-                # Response format is typically "OUTPUT XX INPUT YY" 
                 data = result["data"]
                 _LOGGER.debug("DEBUG: Parsing data: %s", data)
                 
+                # For input query, Knox might return different formats:
+                # Format 1: Single line "V:-1  M:0  L:0  BL:00 BR:00 B: 0 T: 0" (no input info)
+                # Format 2: Multiple lines with "OUTPUT XX VIDEO YY AUDIO ZZ"
+                
+                # Try to find this zone in the OUTPUT list
+                lines = data.split('\n')
+                for line in lines:
+                    _LOGGER.debug("DEBUG: Checking line: %s", line.strip())
+                    if line.strip().startswith("OUTPUT"):
+                        # Parse: "OUTPUT    XX   VIDEO   YY   AUDIO   ZZ"
+                        parts = line.split()
+                        if len(parts) >= 6:
+                            try:
+                                output_num = int(parts[1])
+                                video_input = int(parts[3])
+                                audio_input = int(parts[5])
+                                _LOGGER.debug("DEBUG: Found output %d -> video:%d audio:%d", output_num, video_input, audio_input)
+                                
+                                # If this output matches our zone, return the video input
+                                if output_num == zone:
+                                    _LOGGER.debug("DEBUG: Zone %d found! Using video input %d", zone, video_input)
+                                    return video_input
+                            except (ValueError, IndexError) as e:
+                                _LOGGER.debug("DEBUG: Failed to parse output line '%s': %s", line, e)
+                                continue
+                
+                # Fallback: look for old "INPUT" format
                 if "INPUT" in data:
                     input_part = data.split("INPUT")[1].strip()
                     _LOGGER.debug("DEBUG: Input part: %s", input_part)
@@ -173,7 +199,7 @@ class Knox:
                     _LOGGER.debug("DEBUG: Extracted input number: %d", input_num)
                     return input_num
                 else:
-                    _LOGGER.debug("DEBUG: No 'INPUT' found in data")
+                    _LOGGER.debug("DEBUG: No 'INPUT' or matching OUTPUT found for zone %d", zone)
             else:
                 _LOGGER.debug("DEBUG: Command failed or no data in result")
             return None
@@ -219,9 +245,21 @@ class Knox:
                 data = result["data"]
                 _LOGGER.debug("DEBUG: Parsing volume data: %s", data)
                 
-                # Look for volume value in the response
+                # Knox returns format: "V:XX  M:X  L:X  BL:XX BR:XX B: X T: X"
+                import re
+                volume_match = re.search(r'V:(-?\d+)', data)
+                if volume_match:
+                    volume = int(volume_match.group(1))
+                    _LOGGER.debug("DEBUG: Found volume from V: pattern: %d", volume)
+                    # Knox uses -1 to indicate volume not set or invalid
+                    if volume >= 0:
+                        return volume
+                    else:
+                        _LOGGER.debug("DEBUG: Volume is -1 (not set), returning None")
+                        return None
+                        
+                # Fallback: look for old "VOLUME" format
                 if "VOLUME" in data.upper():
-                    # Extract volume number from response
                     parts = data.split()
                     _LOGGER.debug("DEBUG: Data parts: %s", parts)
                     for i, part in enumerate(parts):
@@ -232,20 +270,6 @@ class Knox:
                                 return volume
                             except ValueError:
                                 continue
-                                
-                # Alternative parsing if format is different
-                lines = data.split('\n')
-                for line in lines:
-                    _LOGGER.debug("DEBUG: Checking line: %s", line)
-                    if 'volume' in line.lower():
-                        # Try to extract number from the line
-                        import re
-                        numbers = re.findall(r'\d+', line)
-                        _LOGGER.debug("DEBUG: Found numbers in line: %s", numbers)
-                        if numbers:
-                            volume = int(numbers[0])
-                            _LOGGER.debug("DEBUG: Extracted volume from regex: %d", volume)
-                            return volume
             else:
                 _LOGGER.debug("DEBUG: Command failed or no data in result")
             return None
@@ -288,9 +312,17 @@ class Knox:
                 data = result["data"]
                 _LOGGER.debug("DEBUG: Parsing mute data: %s", data)
                 
-                # Look for mute status in the response
+                # Knox returns format: "V:XX  M:X  L:X  BL:XX BR:XX B: X T: X"
+                import re
+                mute_match = re.search(r'M:(\d+)', data)
+                if mute_match:
+                    mute_val = int(mute_match.group(1))
+                    mute_state = mute_val == 1  # 1 = muted, 0 = unmuted
+                    _LOGGER.debug("DEBUG: Found mute from M: pattern: %d -> %s", mute_val, mute_state)
+                    return mute_state
+                    
+                # Fallback: look for old "MUTE" format
                 if "MUTE" in data.upper():
-                    # Extract mute value from response
                     parts = data.split()
                     _LOGGER.debug("DEBUG: Data parts: %s", parts)
                     for i, part in enumerate(parts):
@@ -302,15 +334,6 @@ class Knox:
                                 return mute_state
                             except ValueError:
                                 continue
-                                
-                # Alternative parsing if format is different
-                lines = data.split('\n')
-                for line in lines:
-                    _LOGGER.debug("DEBUG: Checking line: %s", line)
-                    if 'mute' in line.lower():
-                        mute_state = '1' in line or 'on' in line.lower()
-                        _LOGGER.debug("DEBUG: Found mute in line, state: %s", mute_state)
-                        return mute_state
             else:
                 _LOGGER.debug("DEBUG: Command failed or no data in result")
             return None
