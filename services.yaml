@@ -51,24 +51,6 @@ knox_test_all_functions:
           max: 63
           mode: box
 
-knox_test_service:
-  name: Knox Test Service  
-  description: Simple test to verify service registration works
-  fields:
-    entity_id:
-      description: The Knox media player entity
-      example: "media_player.pool"
-      required: true
-      selector:
-        entity:
-          domain: media_player
-    test_message:
-      description: Test message to log
-      default: "Hello from test service"
-      required: false
-      selector:
-        text:
-
 knox_get_device_info:
   name: Knox Get Device Info
   description: Get detailed device information and current state
@@ -147,24 +129,6 @@ knox_fix_audio:
           max: 63
           mode: box
 
-knox_test_service:
-  name: Knox Test Service  
-  description: Simple test to verify service registration works
-  fields:
-    entity_id:
-      description: The Knox media player entity
-      example: "media_player.pool"
-      required: true
-      selector:
-        entity:
-          domain: media_player
-    test_message:
-      description: Test message to log
-      default: "Hello from test service"
-      required: false
-      selector:
-        text:
-
 knox_diagnose_zone:
   name: Knox Diagnose Zone Issues
   description: Comprehensive diagnosis of zone audio problems
@@ -207,9 +171,9 @@ knox_setup_zone:
           max: 63
           mode: box
 
-knox_test_service:
-  name: Knox Test Service  
-  description: Simple test to verify service registration works
+knox_find_real_zones:
+  name: Knox Find Real Zones
+  description: Find which zones actually exist in Knox hardware
   fields:
     entity_id:
       description: The Knox media player entity
@@ -218,9 +182,27 @@ knox_test_service:
       selector:
         entity:
           domain: media_player
-    test_message:
-      description: Test message to log
-      default: "Hello from test service"
-      required: false
+
+knox_revert_test:
+  name: Knox Revert Test
+  description: Test old vs new parsing behavior
+  fields:
+    entity_id:
+      description: The Knox media player entity
+      example: "media_player.pool"
+      required: true
       selector:
-        text:
+        entity:
+          domain: media_player
+
+knox_basic_test:
+  name: Knox Basic Test
+  description: Basic connectivity and command test
+  fields:
+    entity_id:
+      description: The Knox media player entity
+      example: "media_player.pool"
+      required: true
+      selector:
+        entity:
+          domain: media_player

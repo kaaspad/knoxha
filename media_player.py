@@ -451,7 +451,7 @@ class KnoxMediaPlayer(MediaPlayerEntity):
             )
             _LOGGER.debug("DEBUG: Retrieved current input: %s", current_input)
             
-            # Find the input name that matches the current input ID
+            # Always update input source - Knox device is source of truth  
             if current_input is not None:
                 old_source = self._attr_source
                 found_source = None
@@ -460,16 +460,29 @@ class KnoxMediaPlayer(MediaPlayerEntity):
                         self._attr_source = input[CONF_INPUT_NAME]
                         found_source = input[CONF_INPUT_NAME]
                         break
-                _LOGGER.debug("DEBUG: Input ID %d -> source '%s' (was '%s')", current_input, found_source, old_source)
+                if found_source:
+                    if old_source != found_source:  # Only log actual changes
+                        _LOGGER.debug("STATE SYNC: Source changed - Input ID %d -> '%s' (was '%s')", current_input, found_source, old_source)
+                else:
+                    _LOGGER.debug("STATE SYNC: Unknown input ID %d from Knox (not in configured inputs)", current_input)
             else:
-                _LOGGER.debug("DEBUG: No input value returned for zone %s", self._zone_id)
+                _LOGGER.debug("STATE SYNC: Knox input unavailable for zone %s, keeping current HA value '%s'", self._zone_id, self._attr_source)
 
+            # Always update HA with current state (even if some values unchanged)
             self.async_write_ha_state()
+            _LOGGER.debug("STATE SYNC: Updated HA state - Vol:%.2f, Muted:%s, State:%s, Source:'%s'", 
+                         self._attr_volume_level, self._attr_is_volume_muted, self._attr_state, self._attr_source)
+            
         except Exception as err:
-            _LOGGER.error("DEBUG: Error updating zone %s: %s", self._zone_id, err)
+            _LOGGER.error("STATE SYNC: Error updating zone %s: %s", self._zone_id, err)
+            # On error, still call async_write_ha_state to maintain responsiveness
+            self.async_write_ha_state()
 
     async def async_added_to_hass(self) -> None:
         """When entity is added to Home Assistant."""
+        # Immediately sync state from Knox device on startup
+        _LOGGER.debug("STARTUP: Entity added to HA, syncing initial state from Knox device")
+        await self.async_update()  # This will read from Knox and update HA state
         self.async_write_ha_state() # Ensure state is written to Home Assistant upon addition
         
     async def async_will_remove_from_hass(self) -> None:
