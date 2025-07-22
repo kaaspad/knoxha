@@ -141,7 +141,7 @@ class KnoxOptionsFlowHandler(config_entries.OptionsFlow):
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize options flow."""
-        self.config_entry = config_entry
+        super().__init__()
         self._zones = config_entry.data.get(CONF_ZONES, []).copy()
         self._inputs = config_entry.data.get(CONF_INPUTS, []).copy()
         self._editing_zone = None
@@ -159,12 +159,13 @@ class KnoxOptionsFlowHandler(config_entries.OptionsFlow):
                 return await self.async_step_inputs()
             
             # Save the configuration and exit
-            new_data = self.config_entry.data.copy()
+            config_entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
+            new_data = config_entry.data.copy()
             new_data[CONF_ZONES] = self._zones
             new_data[CONF_INPUTS] = self._inputs
             
             self.hass.config_entries.async_update_entry(
-                self.config_entry, data=new_data
+                config_entry, data=new_data
             )
             return self.async_create_entry(title="", data={})
 
@@ -306,10 +307,12 @@ class KnoxOptionsFlowHandler(config_entries.OptionsFlow):
                 
                 if input_id and input_name:
                     input_id = int(input_id)
-                    # Check for duplicates
+                    # Check for duplicates in the new list being built
                     if any(input[CONF_INPUT_ID] == input_id for input in new_inputs):
                         errors[input_id_key] = "input_already_configured"
                     else:
+                        # Remove existing input with same ID if it exists, then add new one
+                        new_inputs = [inp for inp in new_inputs if inp[CONF_INPUT_ID] != input_id]
                         new_inputs.append({
                             CONF_INPUT_ID: input_id,
                             CONF_INPUT_NAME: input_name
@@ -349,20 +352,18 @@ class KnoxOptionsFlowHandler(config_entries.OptionsFlow):
         if errors is None:
             errors = {}
             
-        # Get available input IDs (not already configured)
-        used_input_ids = {input[CONF_INPUT_ID] for input in self._inputs}
-        available_input_ids = {str(i): f"Input {i}" for i in range(1, 65) if i not in used_input_ids}
+        # Get available input IDs (show all inputs 1-64, user can replace existing ones)
+        available_input_ids = {str(i): f"Input {i}" for i in range(1, 65)}
         
         # Build the schema dynamically
         schema_dict = {}
         
-        # Show current inputs with delete options (except default input)
+        # Show current inputs with delete options
         if self._inputs:
             for input in self._inputs:
-                # Don't allow deletion of default input if it's the only one
-                if len(self._inputs) > 1 or input[CONF_INPUT_ID] != DEFAULT_INPUT[CONF_INPUT_ID]:
-                    delete_key = f"delete_input_{input[CONF_INPUT_ID]}"
-                    schema_dict[vol.Optional(delete_key, default=False)] = bool
+                # Allow deletion of any input (system will add default input if none left)
+                delete_key = f"delete_input_{input[CONF_INPUT_ID]}"
+                schema_dict[vol.Optional(delete_key, default=False)] = bool
         
         # Add up to 5 new input fields
         for i in range(1, 6):
