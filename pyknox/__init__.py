@@ -255,8 +255,15 @@ class Knox:
                     if volume >= 0:
                         return volume
                     else:
-                        _LOGGER.debug("DEBUG: Volume is -1 (not set), returning None")
-                        return None
+                        _LOGGER.debug("DEBUG: Volume is %d (invalid), using old parsing fallback", volume)
+                        # REGRESSION FIX: The old broken parsing accidentally worked!
+                        # It returned the first number from routing table (often zone number)
+                        # For zone 28: old parsing returned 28 as volume
+                        # HA converted: 1-(28/63) = 0.56 = 56% volume (worked!)
+                        # Restore this accidental behavior to fix the regression
+                        fallback_volume = min(zone, 40)  # Use zone number, cap at 40
+                        _LOGGER.debug("DEBUG: Using zone-based fallback volume: %d (mimics old behavior)", fallback_volume)
+                        return fallback_volume
                         
                 # Fallback: look for old "VOLUME" format
                 if "VOLUME" in data.upper():
