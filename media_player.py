@@ -180,6 +180,12 @@ async def async_setup_entry(
         {},
         "async_raw_test",
     )
+    
+    platform.async_register_entity_service(
+        "knox_find_real_zones",
+        {},
+        "async_find_real_zones",
+    )
 
     return True
 
@@ -988,3 +994,57 @@ class KnoxMediaPlayer(MediaPlayerEntity):
             
         except Exception as err:
             _LOGGER.error("RAW TEST: Error: %s", err)
+            
+    async def async_find_real_zones(self) -> None:
+        """Find which zones actually exist in Knox hardware."""
+        _LOGGER.warning("ZONE FINDER: Looking for real zones in Knox device...")
+        
+        try:
+            # Query the routing table to see available outputs
+            response = await self._hass.async_add_executor_job(
+                self._knox._send_command, "D01"  # Get routing for zone 1 to see all outputs
+            )
+            _LOGGER.warning("ZONE FINDER: Knox routing table response:")
+            _LOGGER.warning("%s", response)
+            
+            # Parse output numbers
+            lines = response.split('\n')
+            available_zones = []
+            for line in lines:
+                if 'OUTPUT' in line.upper():
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        try:
+                            zone_num = int(parts[1])
+                            available_zones.append(zone_num)
+                        except ValueError:
+                            continue
+                            
+            _LOGGER.warning("ZONE FINDER: Available zones in Knox: %s", sorted(available_zones))
+            
+            # Test one of the available zones
+            if available_zones:
+                test_zone = available_zones[0]
+                _LOGGER.warning("ZONE FINDER: Testing zone %d with audio...", test_zone)
+                
+                # Send commands to working zone
+                commands = [
+                    (f"B{test_zone:02d}01", f"Route input 1 to zone {test_zone}"),
+                    (f"$V{test_zone:02d}10", f"Set zone {test_zone} volume to 10 (loud)"),
+                    (f"$M{test_zone:02d}0", f"Unmute zone {test_zone}"),
+                ]
+                
+                for cmd, desc in commands:
+                    _LOGGER.warning("ZONE FINDER: %s", desc)
+                    resp = await self._hass.async_add_executor_job(
+                        self._knox._send_command, cmd
+                    )
+                    _LOGGER.warning("ZONE FINDER: Response: %s", repr(resp))
+                    
+                _LOGGER.warning("ZONE FINDER: 🔊 Try listening to zone %d - it should have audio!", test_zone)
+                _LOGGER.warning("ZONE FINDER: If you hear audio, reconfigure HA to use zone %d instead of 28", test_zone)
+            else:
+                _LOGGER.error("ZONE FINDER: No zones found! Knox device may not be responding properly.")
+                
+        except Exception as err:
+            _LOGGER.error("ZONE FINDER: Error: %s", err)
