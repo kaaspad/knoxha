@@ -327,7 +327,7 @@ class KnoxMediaPlayer(MediaPlayerEntity):
     async def async_set_volume_level(self, volume: float) -> None:
         """Set the volume level."""
         try:
-            _LOGGER.error("VOLUME CHANGE: User setting volume %.2f for zone %d", volume, self._zone_id)
+            _LOGGER.debug("VOLUME CHANGE: User setting volume %.2f for zone %d", volume, self._zone_id)
             _LOGGER.debug("DEBUG: Setting volume level %.2f for zone %d", volume, self._zone_id)
             # Convert volume (0-1) to Knox scale (0-63)
             # volume is 0-1 from HA, where 0 is lowest and 1 is highest
@@ -349,13 +349,13 @@ class KnoxMediaPlayer(MediaPlayerEntity):
     async def async_mute_volume(self, mute: bool) -> None:
         """Mute or unmute the zone."""
         try:
-            _LOGGER.error("MUTE CHANGE: User %s zone %d", "muting" if mute else "unmuting", self._zone_id)
+            _LOGGER.debug("MUTE CHANGE: User %s zone %d", "muting" if mute else "unmuting", self._zone_id)
             result = await self._hass.async_add_executor_job(
                 self._knox.set_mute,
                 self._zone_id,
                 mute,
             )
-            _LOGGER.error("MUTE CHANGE: Knox returned: %s", result)
+            _LOGGER.debug("MUTE CHANGE: Knox returned: %s", result)
             self._attr_is_volume_muted = mute # Optimistically update internal state
             self._attr_state = MediaPlayerState.OFF if mute else MediaPlayerState.ON # Optimistically update internal state
             self.async_write_ha_state()
@@ -365,7 +365,7 @@ class KnoxMediaPlayer(MediaPlayerEntity):
     async def async_select_source(self, source: str) -> None:
         """Select the input source."""
         try:
-            _LOGGER.error("SOURCE CHANGE: User selecting source '%s' for zone %d", source, self._zone_id)
+            _LOGGER.debug("SOURCE CHANGE: User selecting source '%s' for zone %d", source, self._zone_id)
             _LOGGER.debug("DEBUG: Selecting source '%s' for zone %d", source, self._zone_id)
             _LOGGER.debug("DEBUG: Available inputs: %s", self._inputs)
             
@@ -377,17 +377,20 @@ class KnoxMediaPlayer(MediaPlayerEntity):
             _LOGGER.debug("DEBUG: Found input_id %s for source '%s'", input_id, source)
             
             if input_id is not None:
+                _LOGGER.debug("SOURCE CHANGE: Mapping '%s' -> input_id %d", source, input_id)
                 _LOGGER.debug("DEBUG: Setting input %d for zone %d", input_id, self._zone_id)
                 result = await self._hass.async_add_executor_job(
                     self._knox.set_input,
                     self._zone_id,
                     input_id,
                 )
+                _LOGGER.debug("SOURCE CHANGE: Knox returned: %s", result)
                 _LOGGER.debug("DEBUG: set_input returned: %s", result)
                 self._attr_source = source # Optimistically update internal state
                 self.async_write_ha_state()
             else:
-                _LOGGER.error("DEBUG: No input_id found for source '%s'", source)
+                _LOGGER.error("SOURCE CHANGE ERROR: No input_id found for source '%s'", source)
+                _LOGGER.error("SOURCE CHANGE ERROR: Available inputs: %s", self._inputs)
         except Exception as err:
             _LOGGER.error("DEBUG: Error selecting source for zone %s: %s", self._zone_id, err)
 
