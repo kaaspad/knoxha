@@ -107,3 +107,24 @@ knox_test_volume_conversion:
       selector:
         entity:
           domain: media_player
+
+knox_fix_audio:
+  name: Knox Fix Audio Issues
+  description: Attempt to fix audio by setting volume and unmuting
+  fields:
+    entity_id:
+      description: The Knox media player entity
+      example: "media_player.zone_1"
+      required: true
+      selector:
+        entity:
+          domain: media_player
+    test_volume:
+      description: Volume to set (0-63, 0=loudest, 63=quietest)
+      default: 16
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 63
+          mode: box

@@ -147,6 +147,12 @@ async def async_setup_entry(
         {},
         "async_test_volume_conversion",
     )
+    
+    platform.async_register_entity_service(
+        "knox_fix_audio",
+        {vol.Optional("test_volume", default=16): vol.All(vol.Coerce(int), vol.Range(min=0, max=63))},
+        "async_fix_audio",
+    )
 
     return True
 
@@ -656,3 +662,74 @@ class KnoxMediaPlayer(MediaPlayerEntity):
                     
         except Exception as err:
             _LOGGER.error("DEBUG SERVICE: Error testing volume operations: %s", err)
+            
+    async def async_fix_audio(self, test_volume: int = 16) -> None:
+        """Attempt to fix audio issues by setting volume and unmuting."""
+        _LOGGER.info("AUDIO FIX: Starting audio fix for zone %d with volume %d", self._zone_id, test_volume)
+        
+        try:
+            # Step 1: Get current state
+            _LOGGER.info("AUDIO FIX: Step 1 - Getting current state...")
+            current_volume = await self._hass.async_add_executor_job(
+                self._knox.get_volume,
+                self._zone_id,
+            )
+            current_mute = await self._hass.async_add_executor_job(
+                self._knox.get_mute,
+                self._zone_id,
+            )
+            _LOGGER.info("AUDIO FIX: Current state - Volume: %s, Muted: %s", current_volume, current_mute)
+            
+            # Step 2: Unmute if muted
+            _LOGGER.info("AUDIO FIX: Step 2 - Ensuring unmuted...")
+            unmute_result = await self._hass.async_add_executor_job(
+                self._knox.set_mute,
+                self._zone_id,
+                False,  # Unmute
+            )
+            _LOGGER.info("AUDIO FIX: Unmute result: %s", unmute_result)
+            
+            # Step 3: Set a reasonable volume
+            _LOGGER.info("AUDIO FIX: Step 3 - Setting volume to %d...", test_volume)
+            volume_result = await self._hass.async_add_executor_job(
+                self._knox.set_volume,
+                self._zone_id,
+                test_volume,
+            )
+            _LOGGER.info("AUDIO FIX: Set volume result: %s", volume_result)
+            
+            # Step 4: Wait and verify
+            await asyncio.sleep(1)
+            _LOGGER.info("AUDIO FIX: Step 4 - Verifying changes...")
+            new_volume = await self._hass.async_add_executor_job(
+                self._knox.get_volume,
+                self._zone_id,
+            )
+            new_mute = await self._hass.async_add_executor_job(
+                self._knox.get_mute,
+                self._zone_id,
+            )
+            _LOGGER.info("AUDIO FIX: New state - Volume: %s, Muted: %s", new_volume, new_mute)
+            
+            # Step 5: Update HA state
+            _LOGGER.info("AUDIO FIX: Step 5 - Updating Home Assistant state...")
+            if new_volume is not None and new_volume >= 0:
+                self._attr_volume_level = 1 - (new_volume / 63)
+            if new_mute is not None:
+                self._attr_is_volume_muted = new_mute
+                self._attr_state = MediaPlayerState.OFF if new_mute else MediaPlayerState.ON
+            self.async_write_ha_state()
+            
+            _LOGGER.info("AUDIO FIX: Audio fix completed for zone %d", self._zone_id)
+            
+            # Step 6: Recommendations
+            if new_volume is not None and new_volume >= 0:
+                ha_volume = 1 - (new_volume / 63)
+                _LOGGER.info("AUDIO FIX: SUCCESS! Audio should now work.")
+                _LOGGER.info("AUDIO FIX: Knox volume: %d (0=loudest, 63=quietest)", new_volume)
+                _LOGGER.info("AUDIO FIX: HA volume: %.2f (0=quietest, 1=loudest)", ha_volume)
+            else:
+                _LOGGER.warning("AUDIO FIX: Volume is still invalid (%s). Check device connection.", new_volume)
+                
+        except Exception as err:
+            _LOGGER.error("AUDIO FIX: Error during audio fix: %s", err)
