@@ -140,3 +140,33 @@ knox_diagnose_zone:
       selector:
         entity:
           domain: media_player
+
+knox_setup_zone:
+  name: Knox Setup Zone
+  description: Configure a zone with input, volume, and unmute
+  fields:
+    entity_id:
+      description: The Knox media player entity
+      example: "media_player.pool"
+      required: true
+      selector:
+        entity:
+          domain: media_player
+    input_number:
+      description: Input to connect (1=IL Sonos, 2=US Sonos)
+      default: 1
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 64
+          mode: box
+    volume_level:
+      description: Initial volume (0=loudest, 63=quietest)
+      default: 20
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 63
+          mode: box

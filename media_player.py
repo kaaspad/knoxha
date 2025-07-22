@@ -159,6 +159,15 @@ async def async_setup_entry(
         {},
         "async_diagnose_zone",
     )
+    
+    platform.async_register_entity_service(
+        "knox_setup_zone",
+        {
+            vol.Required("input_number"): vol.All(vol.Coerce(int), vol.Range(min=1, max=64)),
+            vol.Optional("volume_level", default=20): vol.All(vol.Coerce(int), vol.Range(min=0, max=63)),
+        },
+        "async_setup_zone",
+    )
 
     return True
 
@@ -835,3 +844,102 @@ class KnoxMediaPlayer(MediaPlayerEntity):
             _LOGGER.error("DIAGNOSIS: Error during diagnosis: %s", err)
             
         _LOGGER.info("=== ZONE DIAGNOSIS END ===")
+        
+    async def async_setup_zone(self, input_number: int, volume_level: int = 20) -> None:
+        """Setup and configure a Knox zone with input, volume, and unmute."""
+        _LOGGER.info("=== ZONE SETUP START for Zone %d (%s) ===", self._zone_id, self._zone_name)
+        _LOGGER.info("SETUP: Configuring zone %d with input %d, volume %d", self._zone_id, input_number, volume_level)
+        
+        try:
+            success_count = 0
+            
+            # Step 1: Set the input (route input to this zone)
+            _LOGGER.info("SETUP: Step 1 - Setting input %d for zone %d...", input_number, self._zone_id)
+            input_result = await self._hass.async_add_executor_job(
+                self._knox.set_input,
+                self._zone_id,
+                input_number,
+            )
+            if input_result:
+                _LOGGER.info("  ✅ Input set successfully")
+                success_count += 1
+            else:
+                _LOGGER.error("  ❌ Failed to set input")
+            
+            # Step 2: Set volume
+            _LOGGER.info("SETUP: Step 2 - Setting volume to %d...", volume_level)
+            volume_result = await self._hass.async_add_executor_job(
+                self._knox.set_volume,
+                self._zone_id,
+                volume_level,
+            )
+            if volume_result:
+                _LOGGER.info("  ✅ Volume set successfully")
+                success_count += 1
+            else:
+                _LOGGER.error("  ❌ Failed to set volume")
+            
+            # Step 3: Unmute
+            _LOGGER.info("SETUP: Step 3 - Unmuting zone...")
+            mute_result = await self._hass.async_add_executor_job(
+                self._knox.set_mute,
+                self._zone_id,
+                False,  # Unmute
+            )
+            if mute_result:
+                _LOGGER.info("  ✅ Zone unmuted successfully")
+                success_count += 1
+            else:
+                _LOGGER.error("  ❌ Failed to unmute zone")
+            
+            # Step 4: Wait and verify
+            await asyncio.sleep(2)
+            _LOGGER.info("SETUP: Step 4 - Verifying configuration...")
+            
+            final_volume = await self._hass.async_add_executor_job(
+                self._knox.get_volume, self._zone_id
+            )
+            final_mute = await self._hass.async_add_executor_job(
+                self._knox.get_mute, self._zone_id
+            )
+            final_input = await self._hass.async_add_executor_job(
+                self._knox.get_input, self._zone_id
+            )
+            
+            _LOGGER.info("SETUP: Final verification:")
+            _LOGGER.info("  - Volume: %s (target: %d)", final_volume, volume_level)
+            _LOGGER.info("  - Muted: %s (target: False)", final_mute)
+            _LOGGER.info("  - Input: %s (target: %d)", final_input, input_number)
+            
+            # Step 5: Update Home Assistant state
+            _LOGGER.info("SETUP: Step 5 - Updating Home Assistant state...")
+            if final_volume is not None and final_volume >= 0:
+                self._attr_volume_level = 1 - (final_volume / 63)
+            if final_mute is not None:
+                self._attr_is_volume_muted = final_mute
+                self._attr_state = MediaPlayerState.OFF if final_mute else MediaPlayerState.ON
+            
+            # Update source based on input
+            if final_input is not None:
+                for input_config in self._inputs:
+                    if input_config[CONF_INPUT_ID] == final_input:
+                        self._attr_source = input_config[CONF_INPUT_NAME]
+                        break
+            
+            self.async_write_ha_state()
+            
+            # Final results
+            if success_count == 3:
+                _LOGGER.info("🎉 SETUP SUCCESS: Zone %d fully configured!", self._zone_id)
+                _LOGGER.info("   Input: %d (%s)", input_number, "IL Sonos" if input_number == 1 else "US Sonos" if input_number == 2 else f"Input {input_number}")
+                _LOGGER.info("   Volume: %d (0=loudest, 63=quietest)", volume_level)
+                _LOGGER.info("   Status: Unmuted and ready")
+                _LOGGER.info("   🔊 You should now hear audio!")
+            else:
+                _LOGGER.warning("⚠️ SETUP PARTIAL: %d/3 operations succeeded", success_count)
+                _LOGGER.warning("   Check Knox device connectivity and try again")
+                
+        except Exception as err:
+            _LOGGER.error("SETUP: Error during zone setup: %s", err)
+            
+        _LOGGER.info("=== ZONE SETUP END ===")
