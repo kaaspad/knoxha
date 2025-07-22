@@ -142,6 +142,7 @@ class KnoxOptionsFlowHandler(config_entries.OptionsFlow):
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize options flow."""
         super().__init__()
+        self._config_entry = config_entry
         self._zones = config_entry.data.get(CONF_ZONES, []).copy()
         self._inputs = config_entry.data.get(CONF_INPUTS, []).copy()
         self._editing_zone = None
@@ -159,13 +160,12 @@ class KnoxOptionsFlowHandler(config_entries.OptionsFlow):
                 return await self.async_step_inputs()
             
             # Save the configuration and exit
-            config_entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
-            new_data = config_entry.data.copy()
+            new_data = self._config_entry.data.copy()
             new_data[CONF_ZONES] = self._zones
             new_data[CONF_INPUTS] = self._inputs
             
             self.hass.config_entries.async_update_entry(
-                config_entry, data=new_data
+                self._config_entry, data=new_data
             )
             return self.async_create_entry(title="", data={})
 
