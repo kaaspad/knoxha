@@ -1,0 +1,109 @@
+knox_debug_command:
+  name: Knox Debug Command
+  description: Send raw command to Knox device for debugging
+  fields:
+    entity_id:
+      description: The Knox media player entity
+      example: "media_player.zone_1"
+      required: true
+      selector:
+        entity:
+          domain: media_player
+    command:
+      description: Raw Knox command to send (e.g., "D01", "$D01", "B0102")
+      example: "D01"
+      required: true
+      selector:
+        text:
+    expect_response:
+      description: Whether to expect a response from the device
+      default: true
+      selector:
+        boolean:
+
+knox_test_all_functions:
+  name: Knox Test All Functions
+  description: Test all Knox functions for a zone
+  fields:
+    entity_id:
+      description: The Knox media player entity
+      example: "media_player.zone_1"
+      required: true
+      selector:
+        entity:
+          domain: media_player
+    test_input:
+      description: Input ID to test (1-64)
+      default: 1
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 64
+          mode: box
+    test_volume:
+      description: Volume to test (0-63)
+      default: 32
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 63
+          mode: box
+
+knox_get_device_info:
+  name: Knox Get Device Info
+  description: Get detailed device information and current state
+  fields:
+    entity_id:
+      description: The Knox media player entity
+      example: "media_player.zone_1"
+      required: true
+      selector:
+        entity:
+          domain: media_player
+
+knox_start_debug_polling:
+  name: Knox Start Debug Polling
+  description: Start periodic polling to monitor device state changes
+  fields:
+    entity_id:
+      description: The Knox media player entity
+      example: "media_player.zone_1"
+      required: true
+      selector:
+        entity:
+          domain: media_player
+    interval:
+      description: Polling interval in seconds (5-300)
+      default: 30
+      required: false
+      selector:
+        number:
+          min: 5
+          max: 300
+          mode: box
+
+knox_stop_debug_polling:
+  name: Knox Stop Debug Polling  
+  description: Stop periodic polling
+  fields:
+    entity_id:
+      description: The Knox media player entity
+      example: "media_player.zone_1"
+      required: true
+      selector:
+        entity:
+          domain: media_player
+
+knox_test_volume_conversion:
+  name: Knox Test Volume Conversion
+  description: Test volume conversion between HA and Knox scales
+  fields:
+    entity_id:
+      description: The Knox media player entity
+      example: "media_player.zone_1"
+      required: true
+      selector:
+        entity:
+          domain: media_player

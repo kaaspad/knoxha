@@ -22,7 +22,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers import entity_platform
+from homeassistant.helpers.event import async_track_time_interval
 import voluptuous as vol
+import asyncio
+from datetime import timedelta
 
 from .const import (
     DOMAIN,
@@ -101,6 +104,49 @@ async def async_setup_entry(
         {vol.Required("source"): str},
         "async_select_source",
     )
+    
+    # Debug services
+    platform.async_register_entity_service(
+        "knox_debug_command",
+        {
+            vol.Required("command"): str,
+            vol.Optional("expect_response", default=True): bool,
+        },
+        "async_debug_command",
+    )
+    
+    platform.async_register_entity_service(
+        "knox_test_all_functions",
+        {
+            vol.Optional("test_input", default=1): vol.All(vol.Coerce(int), vol.Range(min=1, max=64)),
+            vol.Optional("test_volume", default=32): vol.All(vol.Coerce(int), vol.Range(min=0, max=63)),
+        },
+        "async_test_all_functions",
+    )
+    
+    platform.async_register_entity_service(
+        "knox_get_device_info",
+        {},
+        "async_get_device_info",
+    )
+    
+    platform.async_register_entity_service(
+        "knox_start_debug_polling",
+        {vol.Optional("interval", default=30): vol.All(vol.Coerce(int), vol.Range(min=5, max=300))},
+        "async_start_debug_polling",
+    )
+    
+    platform.async_register_entity_service(
+        "knox_stop_debug_polling",
+        {},
+        "async_stop_debug_polling",
+    )
+    
+    platform.async_register_entity_service(
+        "knox_test_volume_conversion",
+        {},
+        "async_test_volume_conversion",
+    )
 
     return True
 
@@ -123,6 +169,9 @@ class KnoxMediaPlayer(MediaPlayerEntity):
         self._zone_name = zone_name
         self._inputs = inputs
         self._entry_id = entry_id
+        self._debug_polling = False
+        self._debug_polling_interval = 30  # seconds
+        self._debug_cancel_polling = None
 
         # Initialize _attr_ properties directly
         self._attr_state = MediaPlayerState.OFF
@@ -227,19 +276,23 @@ class KnoxMediaPlayer(MediaPlayerEntity):
     async def async_set_volume_level(self, volume: float) -> None:
         """Set the volume level."""
         try:
+            _LOGGER.debug("DEBUG: Setting volume level %.2f for zone %d", volume, self._zone_id)
             # Convert volume (0-1) to Knox scale (0-63)
             # volume is 0-1 from HA, where 0 is lowest and 1 is highest
             # Knox uses 0 (lowest) to 63 (highest)
             volume_knox = int((1 - volume) * 63)  # This will map 0->63 and 1->0
-            await self._hass.async_add_executor_job(
+            _LOGGER.debug("DEBUG: HA volume %.2f -> Knox volume %d (formula: int((1 - %.2f) * 63))", volume, volume_knox, volume)
+            
+            result = await self._hass.async_add_executor_job(
                 self._knox.set_volume,
                 self._zone_id,
                 volume_knox,
             )
+            _LOGGER.debug("DEBUG: set_volume returned: %s", result)
             self._attr_volume_level = volume
             self.async_write_ha_state()
         except Exception as err:
-            _LOGGER.error("Error setting volume for zone %s: %s", self._zone_id, err)
+            _LOGGER.error("DEBUG: Error setting volume for zone %s: %s", self._zone_id, err)
 
     async def async_mute_volume(self, mute: bool) -> None:
         """Mute or unmute the zone."""
@@ -258,21 +311,30 @@ class KnoxMediaPlayer(MediaPlayerEntity):
     async def async_select_source(self, source: str) -> None:
         """Select the input source."""
         try:
+            _LOGGER.debug("DEBUG: Selecting source '%s' for zone %d", source, self._zone_id)
+            _LOGGER.debug("DEBUG: Available inputs: %s", self._inputs)
+            
             # Find the input ID for the selected source
             input_id = next(
                 (input[CONF_INPUT_ID] for input in self._inputs if input[CONF_INPUT_NAME] == source),
                 None,
             )
+            _LOGGER.debug("DEBUG: Found input_id %s for source '%s'", input_id, source)
+            
             if input_id is not None:
-                await self._hass.async_add_executor_job(
+                _LOGGER.debug("DEBUG: Setting input %d for zone %d", input_id, self._zone_id)
+                result = await self._hass.async_add_executor_job(
                     self._knox.set_input,
                     self._zone_id,
                     input_id,
                 )
+                _LOGGER.debug("DEBUG: set_input returned: %s", result)
                 self._attr_source = source # Optimistically update internal state
                 self.async_write_ha_state()
+            else:
+                _LOGGER.error("DEBUG: No input_id found for source '%s'", source)
         except Exception as err:
-            _LOGGER.error("Error selecting source for zone %s: %s", self._zone_id, err)
+            _LOGGER.error("DEBUG: Error selecting source for zone %s: %s", self._zone_id, err)
 
     async def async_play_media(self, media_content_type: str, media_id: str, **kwargs: Any) -> None:
         """Play media via the Knox device.
@@ -288,49 +350,309 @@ class KnoxMediaPlayer(MediaPlayerEntity):
     async def async_update(self) -> None:
         """Update the state of the zone."""
         try:
+            _LOGGER.debug("DEBUG: Updating state for zone %d", self._zone_id)
+            
             # Get current volume from Knox (0 to 63)
             volume_knox = await self._hass.async_add_executor_job(
                 self._knox.get_volume,
                 self._zone_id,
             )
+            _LOGGER.debug("DEBUG: Retrieved Knox volume: %s", volume_knox)
+            
             # Only update volume if we got a valid value
             if volume_knox is not None:
                 # Convert Knox volume (0 to 63) to HA volume (0 to 1)
                 # 63 -> 0, 0 -> 1
+                old_volume = self._attr_volume_level
                 self._attr_volume_level = 1 - (volume_knox / 63)
+                _LOGGER.debug("DEBUG: Knox volume %d -> HA volume %.2f (was %.2f)", volume_knox, self._attr_volume_level, old_volume)
             else:
-                _LOGGER.debug("No volume value returned for zone %s", self._zone_id)
+                _LOGGER.debug("DEBUG: No volume value returned for zone %s", self._zone_id)
 
             # Get mute state
             is_muted = await self._hass.async_add_executor_job(
                 self._knox.get_mute,
                 self._zone_id,
             )
+            _LOGGER.debug("DEBUG: Retrieved mute state: %s", is_muted)
+            
             if is_muted is not None:
+                old_muted = self._attr_is_volume_muted
+                old_state = self._attr_state
                 self._attr_is_volume_muted = is_muted
                 # Update state based on mute
                 self._attr_state = MediaPlayerState.OFF if is_muted else MediaPlayerState.ON
+                _LOGGER.debug("DEBUG: Mute %s -> %s, State %s -> %s", old_muted, is_muted, old_state, self._attr_state)
             else:
-                _LOGGER.debug("No mute state returned for zone %s", self._zone_id)
+                _LOGGER.debug("DEBUG: No mute state returned for zone %s", self._zone_id)
 
             # Get current input
             current_input = await self._hass.async_add_executor_job(
                 self._knox.get_input,
                 self._zone_id,
             )
+            _LOGGER.debug("DEBUG: Retrieved current input: %s", current_input)
+            
             # Find the input name that matches the current input ID
             if current_input is not None:
+                old_source = self._attr_source
+                found_source = None
                 for input in self._inputs:
                     if input[CONF_INPUT_ID] == current_input:
                         self._attr_source = input[CONF_INPUT_NAME]
+                        found_source = input[CONF_INPUT_NAME]
                         break
+                _LOGGER.debug("DEBUG: Input ID %d -> source '%s' (was '%s')", current_input, found_source, old_source)
             else:
-                _LOGGER.debug("No input value returned for zone %s", self._zone_id)
+                _LOGGER.debug("DEBUG: No input value returned for zone %s", self._zone_id)
 
             self.async_write_ha_state()
         except Exception as err:
-            _LOGGER.error("Error updating zone %s: %s", self._zone_id, err)
+            _LOGGER.error("DEBUG: Error updating zone %s: %s", self._zone_id, err)
 
     async def async_added_to_hass(self) -> None:
         """When entity is added to Home Assistant."""
-        self.async_write_ha_state() # Ensure state is written to Home Assistant upon addition 
+        self.async_write_ha_state() # Ensure state is written to Home Assistant upon addition
+        
+    async def async_will_remove_from_hass(self) -> None:
+        """When entity is removed from Home Assistant."""
+        if self._debug_cancel_polling:
+            self._debug_cancel_polling()
+            self._debug_cancel_polling = None
+        
+    async def async_debug_command(self, command: str, expect_response: bool = True) -> None:
+        """Send a raw command to the Knox device for debugging."""
+        try:
+            _LOGGER.info("DEBUG SERVICE: Sending raw command '%s' to zone %d", command, self._zone_id)
+            response = await self._hass.async_add_executor_job(
+                self._knox._send_command,
+                command,
+            )
+            _LOGGER.info("DEBUG SERVICE: Raw response: %s", repr(response))
+            
+            if expect_response:
+                result = await self._hass.async_add_executor_job(
+                    self._knox._parse_response,
+                    response,
+                )
+                _LOGGER.info("DEBUG SERVICE: Parsed result: %s", result)
+                
+        except Exception as err:
+            _LOGGER.error("DEBUG SERVICE: Error with command '%s': %s", command, err)
+            
+    async def async_test_all_functions(self, test_input: int = 1, test_volume: int = 32) -> None:
+        """Test all Knox functions for this zone."""
+        _LOGGER.info("DEBUG SERVICE: Starting comprehensive test for zone %d", self._zone_id)
+        
+        try:
+            # Test get_input
+            _LOGGER.info("DEBUG SERVICE: Testing get_input...")
+            current_input = await self._hass.async_add_executor_job(
+                self._knox.get_input,
+                self._zone_id,
+            )
+            _LOGGER.info("DEBUG SERVICE: get_input result: %s", current_input)
+            
+            # Test set_input
+            _LOGGER.info("DEBUG SERVICE: Testing set_input with input %d...", test_input)
+            set_input_result = await self._hass.async_add_executor_job(
+                self._knox.set_input,
+                self._zone_id,
+                test_input,
+            )
+            _LOGGER.info("DEBUG SERVICE: set_input result: %s", set_input_result)
+            
+            # Test get_volume
+            _LOGGER.info("DEBUG SERVICE: Testing get_volume...")
+            current_volume = await self._hass.async_add_executor_job(
+                self._knox.get_volume,
+                self._zone_id,
+            )
+            _LOGGER.info("DEBUG SERVICE: get_volume result: %s", current_volume)
+            
+            # Test set_volume
+            _LOGGER.info("DEBUG SERVICE: Testing set_volume with volume %d...", test_volume)
+            set_volume_result = await self._hass.async_add_executor_job(
+                self._knox.set_volume,
+                self._zone_id,
+                test_volume,
+            )
+            _LOGGER.info("DEBUG SERVICE: set_volume result: %s", set_volume_result)
+            
+            # Test get_mute
+            _LOGGER.info("DEBUG SERVICE: Testing get_mute...")
+            current_mute = await self._hass.async_add_executor_job(
+                self._knox.get_mute,
+                self._zone_id,
+            )
+            _LOGGER.info("DEBUG SERVICE: get_mute result: %s", current_mute)
+            
+            # Test set_mute (unmute)
+            _LOGGER.info("DEBUG SERVICE: Testing set_mute (unmute)...")
+            set_mute_result = await self._hass.async_add_executor_job(
+                self._knox.set_mute,
+                self._zone_id,
+                False,
+            )
+            _LOGGER.info("DEBUG SERVICE: set_mute (unmute) result: %s", set_mute_result)
+            
+            # Test set_mute (mute)
+            _LOGGER.info("DEBUG SERVICE: Testing set_mute (mute)...")
+            set_mute_result2 = await self._hass.async_add_executor_job(
+                self._knox.set_mute,
+                self._zone_id,
+                True,
+            )
+            _LOGGER.info("DEBUG SERVICE: set_mute (mute) result: %s", set_mute_result2)
+            
+            # Test get_zone_state
+            _LOGGER.info("DEBUG SERVICE: Testing get_zone_state...")
+            zone_state = await self._hass.async_add_executor_job(
+                self._knox.get_zone_state,
+                self._zone_id,
+            )
+            _LOGGER.info("DEBUG SERVICE: get_zone_state result: %s", zone_state)
+            
+            _LOGGER.info("DEBUG SERVICE: Comprehensive test completed for zone %d", self._zone_id)
+            
+        except Exception as err:
+            _LOGGER.error("DEBUG SERVICE: Error during comprehensive test: %s", err)
+            
+    async def async_get_device_info(self) -> None:
+        """Get detailed device information and current state."""
+        _LOGGER.info("DEBUG SERVICE: Getting device info for zone %d", self._zone_id)
+        
+        try:
+            # Get current state
+            _LOGGER.info("DEBUG SERVICE: Current HA state:")
+            _LOGGER.info("  - Name: %s", self.name)
+            _LOGGER.info("  - Zone ID: %d", self._zone_id)
+            _LOGGER.info("  - State: %s", self._attr_state)
+            _LOGGER.info("  - Volume Level: %.2f", self._attr_volume_level)
+            _LOGGER.info("  - Is Muted: %s", self._attr_is_volume_muted)
+            _LOGGER.info("  - Current Source: %s", self._attr_source)
+            _LOGGER.info("  - Available Sources: %s", self._attr_source_list)
+            _LOGGER.info("  - Unique ID: %s", self._attr_unique_id)
+            
+            # Get device state directly from Knox
+            _LOGGER.info("DEBUG SERVICE: Knox device state:")
+            zone_state = await self._hass.async_add_executor_job(
+                self._knox.get_zone_state,
+                self._zone_id,
+            )
+            _LOGGER.info("  - Zone State: %s", zone_state)
+            
+            # Connection info
+            _LOGGER.info("DEBUG SERVICE: Knox connection info:")
+            _LOGGER.info("  - Host: %s", self._knox._host)
+            _LOGGER.info("  - Port: %d", self._knox._port)
+            _LOGGER.info("  - Connected: %s", self._knox._connected)
+            
+            # Input mapping
+            _LOGGER.info("DEBUG SERVICE: Input configuration:")
+            for i, input_config in enumerate(self._inputs):
+                _LOGGER.info("  - Input %d: ID=%s, Name='%s'", i+1, input_config[CONF_INPUT_ID], input_config[CONF_INPUT_NAME])
+                
+        except Exception as err:
+            _LOGGER.error("DEBUG SERVICE: Error getting device info: %s", err)
+            
+    async def async_start_debug_polling(self, interval: int = 30) -> None:
+        """Start debug polling to monitor device state changes."""
+        if self._debug_polling:
+            _LOGGER.info("DEBUG SERVICE: Debug polling already active for zone %d", self._zone_id)
+            return
+            
+        self._debug_polling = True
+        self._debug_polling_interval = interval
+        _LOGGER.info("DEBUG SERVICE: Starting debug polling every %d seconds for zone %d", interval, self._zone_id)
+        
+        async def _poll_debug():
+            if not self._debug_polling:
+                return
+            try:
+                _LOGGER.info("DEBUG POLL: Polling zone %d state...", self._zone_id)
+                await self.async_update()
+                _LOGGER.info("DEBUG POLL: Zone %d - State: %s, Volume: %.2f, Muted: %s, Source: %s", 
+                           self._zone_id, self._attr_state, self._attr_volume_level, 
+                           self._attr_is_volume_muted, self._attr_source)
+            except Exception as err:
+                _LOGGER.error("DEBUG POLL: Error polling zone %d: %s", self._zone_id, err)
+        
+        self._debug_cancel_polling = async_track_time_interval(
+            self._hass, lambda _: asyncio.create_task(_poll_debug()), timedelta(seconds=interval)
+        )
+        
+    async def async_stop_debug_polling(self) -> None:
+        """Stop debug polling."""
+        if not self._debug_polling:
+            _LOGGER.info("DEBUG SERVICE: Debug polling not active for zone %d", self._zone_id)
+            return
+            
+        self._debug_polling = False
+        if self._debug_cancel_polling:
+            self._debug_cancel_polling()
+            self._debug_cancel_polling = None
+            
+        _LOGGER.info("DEBUG SERVICE: Stopped debug polling for zone %d", self._zone_id)
+        
+    async def async_test_volume_conversion(self) -> None:
+        """Test volume conversion between HA and Knox scales."""
+        _LOGGER.info("DEBUG SERVICE: Testing volume conversion for zone %d", self._zone_id)
+        
+        # Test conversion from HA to Knox
+        test_volumes_ha = [0.0, 0.25, 0.5, 0.75, 1.0]
+        _LOGGER.info("DEBUG SERVICE: HA to Knox volume conversion:")
+        for ha_vol in test_volumes_ha:
+            knox_vol = int((1 - ha_vol) * 63)
+            _LOGGER.info("  HA %.2f -> Knox %d", ha_vol, knox_vol)
+            
+        # Test conversion from Knox to HA
+        test_volumes_knox = [0, 16, 32, 48, 63]
+        _LOGGER.info("DEBUG SERVICE: Knox to HA volume conversion:")
+        for knox_vol in test_volumes_knox:
+            ha_vol = 1 - (knox_vol / 63)
+            _LOGGER.info("  Knox %d -> HA %.2f", knox_vol, ha_vol)
+            
+        # Test actual volume setting and reading
+        try:
+            _LOGGER.info("DEBUG SERVICE: Testing actual volume operations...")
+            
+            # Get current volume
+            current_knox = await self._hass.async_add_executor_job(
+                self._knox.get_volume,
+                self._zone_id,
+            )
+            if current_knox is not None:
+                current_ha = 1 - (current_knox / 63)
+                _LOGGER.info("  Current: Knox %d -> HA %.2f", current_knox, current_ha)
+                
+            # Test setting different volumes
+            for ha_vol in [0.2, 0.5, 0.8]:
+                _LOGGER.info("  Testing HA volume %.2f...", ha_vol)
+                knox_vol = int((1 - ha_vol) * 63)
+                _LOGGER.info("    Calculated Knox volume: %d", knox_vol)
+                
+                # Set the volume
+                result = await self._hass.async_add_executor_job(
+                    self._knox.set_volume,
+                    self._zone_id,
+                    knox_vol,
+                )
+                _LOGGER.info("    Set volume result: %s", result)
+                
+                # Wait a moment for the device to process
+                await asyncio.sleep(1)
+                
+                # Read back the volume
+                read_knox = await self._hass.async_add_executor_job(
+                    self._knox.get_volume,
+                    self._zone_id,
+                )
+                if read_knox is not None:
+                    read_ha = 1 - (read_knox / 63)
+                    _LOGGER.info("    Read back: Knox %d -> HA %.2f", read_knox, read_ha)
+                else:
+                    _LOGGER.warning("    Failed to read back volume")
+                    
+        except Exception as err:
+            _LOGGER.error("DEBUG SERVICE: Error testing volume operations: %s", err)
