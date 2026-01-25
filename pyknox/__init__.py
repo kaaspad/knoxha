@@ -2,6 +2,7 @@
 import logging
 import socket
 import time
+import asyncio
 from typing import Optional, Dict, Any
 
 _LOGGER = logging.getLogger(__name__)
@@ -15,8 +16,9 @@ class Knox:
         self._port = port
         self._socket = None
         self._connected = False
-        self._max_retries = 3
-        self._retry_delay = 1  # seconds
+        self._max_retries = 1  # Reduced from 3 to 1 - no retries for faster response
+        self._retry_delay = 0.5  # Reduced from 1s to 0.5s
+        self._command_lock = asyncio.Lock()  # Prevent concurrent commands
 
     def connect(self) -> None:
         """Connect to the Knox device."""
@@ -25,7 +27,7 @@ class Knox:
 
         try:
             self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self._socket.settimeout(10)  # Increased timeout
+            self._socket.settimeout(2)  # Reduced from 10s to 2s for faster response
             self._socket.connect((self._host, self._port))
             self._connected = True
             _LOGGER.debug("Connected to Knox device at %s:%s", self._host, self._port)
@@ -55,7 +57,7 @@ class Knox:
                 self._socket.sendall(f"{command}\r".encode())
                 response = self._socket.recv(1024).decode().strip()
                 _LOGGER.debug("Sent command: %s, Received response: %s", command, response)
-                time.sleep(0.9) # Add a 0.9-second delay after sending/receiving a command
+                time.sleep(0.1)  # Reduced from 0.9s to 0.1s - minimal delay for device stability
                 return response
             except socket.timeout:
                 _LOGGER.warning("Timeout on attempt %d for command %s", attempt + 1, command)
@@ -67,6 +69,16 @@ class Knox:
                 _LOGGER.error("Error sending command %s: %s", command, err)
                 self._connected = False
                 raise
+
+    async def _send_command_async(self, command: str) -> str:
+        """Async wrapper for sending commands with proper locking."""
+        _LOGGER.warning("🔥 ASYNC LOCK: Waiting for command lock for: %s", command)
+        async with self._command_lock:
+            _LOGGER.warning("🔥 ASYNC LOCK: Acquired lock, executing: %s", command)
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, self._send_command, command)
+            _LOGGER.warning("🔥 ASYNC LOCK: Released lock, result: %s", repr(result))
+            return result
 
     def _parse_response(self, response: str) -> Dict[str, Any]:
         """Parse the response from the Knox device."""
@@ -145,6 +157,24 @@ class Knox:
         _LOGGER.debug("DEBUG: set_input (B%02d%02d) response result: %s", zone, input_id, result)
         return result["success"]
 
+    async def set_input_async(self, zone: int, input_id: int) -> bool:
+        """Set the input for a zone (async with proper locking)."""
+        _LOGGER.debug("ASYNC: Setting input %d for zone %d", input_id, zone)
+        if not 1 <= input_id <= 64:
+            _LOGGER.error("ASYNC: Invalid input_id %d - must be 1-64", input_id)
+            return False
+        if not 1 <= zone <= 64:
+            _LOGGER.error("ASYNC: Invalid zone %d - must be 1-64", zone)
+            return False
+        
+        command = f"B{zone:02d}{input_id:02d}"
+        _LOGGER.debug("ASYNC: Sending command: %s", command)
+        response = await self._send_command_async(command)
+        _LOGGER.debug("ASYNC: Raw response: %s", repr(response))
+        result = self._parse_response(response)
+        _LOGGER.debug("ASYNC: set_input (B%02d%02d) response result: %s", zone, input_id, result)
+        return result["success"]
+
     def get_input(self, zone: int) -> Optional[int]:
         """Get the current input for a zone."""
         try:
@@ -207,6 +237,12 @@ class Knox:
             _LOGGER.error("DEBUG: Error getting input for zone %s: %s", zone, err)
             return None
 
+    async def get_input_async(self, zone: int) -> Optional[int]:
+        """Get the current input for a zone (async with proper locking)."""
+        async with self._command_lock:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, self.get_input, zone)
+
     def set_volume(self, zone: int, volume: int) -> bool:
         """Set the volume for a zone (0-63)."""
         _LOGGER.debug("DEBUG: Setting volume %d for zone %d", volume, zone)
@@ -223,6 +259,24 @@ class Knox:
         _LOGGER.debug("DEBUG: Raw response: %s", repr(response))
         result = self._parse_response(response)
         _LOGGER.debug("DEBUG: set_volume ($V%02d%02d) response result: %s", zone, volume, result)
+        return result["success"]
+
+    async def set_volume_async(self, zone: int, volume: int) -> bool:
+        """Set the volume for a zone (0-63) (async with proper locking)."""
+        _LOGGER.debug("ASYNC: Setting volume %d for zone %d", volume, zone)
+        if not 0 <= volume <= 63:
+            _LOGGER.error("ASYNC: Invalid volume %d - must be 0-63", volume)
+            raise ValueError("Volume must be between 0 and 63")
+        if not 1 <= zone <= 64:
+            _LOGGER.error("ASYNC: Invalid zone %d - must be 1-64", zone)
+            return False
+        
+        command = f"$V{zone:02d}{volume:02d}"
+        _LOGGER.debug("ASYNC: Sending command: %s", command)
+        response = await self._send_command_async(command)
+        _LOGGER.debug("ASYNC: Raw response: %s", repr(response))
+        result = self._parse_response(response)
+        _LOGGER.debug("ASYNC: set_volume ($V%02d%02d) response result: %s", zone, volume, result)
         return result["success"]
 
     def get_volume(self, zone: int) -> Optional[int]:
@@ -255,14 +309,13 @@ class Knox:
                     if volume >= 0:
                         return volume
                     else:
-                        _LOGGER.debug("DEBUG: Volume is %d (invalid), using old parsing fallback", volume)
-                        # REGRESSION FIX: The old broken parsing accidentally worked!
-                        # It returned the first number from routing table (often zone number)
-                        # For zone 28: old parsing returned 28 as volume
-                        # HA converted: 1-(28/63) = 0.56 = 56% volume (worked!)
-                        # Restore this accidental behavior to fix the regression
-                        fallback_volume = min(zone, 40)  # Use zone number, cap at 40
-                        _LOGGER.debug("DEBUG: Using zone-based fallback volume: %d (mimics old behavior)", fallback_volume)
+                        _LOGGER.debug("DEBUG: Volume is %d (invalid), using regression fix fallback", volume)
+                        # CRITICAL: This fallback is needed because Knox reports V:-1 for some zones
+                        # The old broken parsing accidentally worked by returning zone numbers
+                        # Zone 28 -> volume 28 -> HA 56% volume -> audible audio
+                        # Without this, zones report no volume and become inaudible
+                        fallback_volume = min(zone, 40)  # Use zone number, cap at 40 for safety
+                        _LOGGER.debug("DEBUG: Using zone-based fallback volume: %d (restores audio)", fallback_volume)
                         return fallback_volume
                         
                 # Fallback: look for old "VOLUME" format
@@ -284,6 +337,12 @@ class Knox:
             _LOGGER.error("DEBUG: Error getting volume for zone %s: %s", zone, err)
             return None
 
+    async def get_volume_async(self, zone: int) -> Optional[int]:
+        """Get the current volume for a zone (async with proper locking)."""
+        async with self._command_lock:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, self.get_volume, zone)
+
     def set_mute(self, zone: int, mute: bool) -> bool:
         """Set the mute state for a zone."""
         _LOGGER.debug("DEBUG: Setting mute %s for zone %d", mute, zone)
@@ -298,6 +357,26 @@ class Knox:
         result = self._parse_response(response)
         _LOGGER.debug("DEBUG: set_mute ($M%02d%s) response result: %s", zone, '1' if mute else '0', result)
         return result["success"]
+
+    async def set_mute_async(self, zone: int, mute: bool) -> bool:
+        """Set the mute state for a zone (async with proper locking)."""
+        _LOGGER.warning("🔥 KNOX COMMAND: set_mute_async(zone=%d, mute=%s) called", zone, mute)
+        if not 1 <= zone <= 64:
+            _LOGGER.error("🔥 INVALID ZONE: Zone %d is invalid - must be 1-64", zone)
+            return False
+        
+        command = f"$M{zone:02d}{'1' if mute else '0'}"
+        _LOGGER.warning("🔥 RAW COMMAND: Sending '%s' to Knox device", command)
+        
+        response = await self._send_command_async(command)
+        _LOGGER.warning("🔥 RAW RESPONSE: Knox returned: %s", repr(response))
+        
+        result = self._parse_response(response)
+        _LOGGER.warning("🔥 PARSED RESULT: %s", result)
+        
+        success = result["success"]
+        _LOGGER.warning("🔥 FINAL RESULT: Command %s %s", command, "SUCCEEDED" if success else "FAILED")
+        return success
 
     def get_mute(self, zone: int) -> Optional[bool]:
         """Get the current mute state for a zone."""
@@ -347,6 +426,12 @@ class Knox:
         except Exception as err:
             _LOGGER.error("DEBUG: Error getting mute for zone %s: %s", zone, err)
             return None
+
+    async def get_mute_async(self, zone: int) -> Optional[bool]:
+        """Get the current mute state for a zone (async with proper locking)."""
+        async with self._command_lock:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, self.get_mute, zone)
 
     def get_zone_state(self, zone: int) -> Dict[str, Any]:
         """Get the current state of a zone.

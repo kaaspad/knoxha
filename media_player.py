@@ -198,6 +198,30 @@ async def async_setup_entry(
         {},
         "async_basic_test",
     )
+    
+    platform.async_register_entity_service(
+        "knox_emergency_isolation_test",
+        {},
+        "async_emergency_isolation_test",
+    )
+    
+    platform.async_register_entity_service(
+        "knox_system_reboot",
+        {},
+        "async_system_reboot",
+    )
+    
+    platform.async_register_entity_service(
+        "knox_start_gentle_polling",
+        {vol.Optional("interval_minutes", default=5): vol.All(vol.Coerce(int), vol.Range(min=1, max=60))},
+        "async_start_gentle_polling",
+    )
+    
+    platform.async_register_entity_service(
+        "knox_stop_gentle_polling",
+        {},
+        "async_stop_gentle_polling",
+    )
 
     return True
 
@@ -223,6 +247,11 @@ class KnoxMediaPlayer(MediaPlayerEntity):
         self._debug_polling = False
         self._debug_polling_interval = 30  # seconds
         self._debug_cancel_polling = None
+        
+        # Gentle periodic sync polling
+        self._gentle_polling = False
+        self._gentle_polling_interval = 300  # 5 minutes default
+        self._gentle_cancel_polling = None
 
         # Initialize _attr_ properties directly  
         self._attr_state = MediaPlayerState.OFF
@@ -287,6 +316,11 @@ class KnoxMediaPlayer(MediaPlayerEntity):
         )
 
     @property
+    def should_poll(self) -> bool:
+        """Disable automatic polling due to Knox device corruption issues."""
+        return False
+
+    @property
     def device_info(self) -> DeviceInfo:
         """Return device info."""
         return DeviceInfo(
@@ -296,31 +330,57 @@ class KnoxMediaPlayer(MediaPlayerEntity):
             manufacturer="Knox",
         )
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Return additional state attributes."""
+        try:
+            return {
+                "knox_zone_id": self._zone_id,
+                "knox_zone_name": self._zone_name,
+                "knox_host": self._knox._host,
+                "knox_port": self._knox._port,
+                "configured_inputs": len(self._inputs),
+                "integration_version": "1.0.0",
+                "gentle_polling_active": self._gentle_polling,
+                "gentle_polling_interval_minutes": self._gentle_polling_interval // 60 if self._gentle_polling else 0,
+            }
+        except Exception as err:
+            _LOGGER.error("Error getting extra attributes for zone %s: %s", self._zone_id, err)
+            return None
+
     async def async_turn_on(self) -> None:
         """Turn the zone on."""
         try:
-            await self._hass.async_add_executor_job(
-                self._knox.set_mute,
-                self._zone_id,
-                False,  # Unmute
-            )
-            self._attr_state = MediaPlayerState.ON
-            self._attr_is_volume_muted = False
-            self.async_write_ha_state()
+            _LOGGER.warning("🔥 EMERGENCY DEBUG: User requesting to turn ON zone %d (%s)", self._zone_id, self._zone_name)
+            _LOGGER.warning("🔥 COMMAND TRACE: About to send $M%02d0 (unmute zone %d)", self._zone_id, self._zone_id)
+            
+            # Use async method to prevent cross-zone interference
+            result = await self._knox.set_mute_async(self._zone_id, False)
+            
+            _LOGGER.warning("🔥 COMMAND RESULT: set_mute_async(zone=%d, mute=False) returned: %s", self._zone_id, result)
+            
+            if result:
+                self._attr_state = MediaPlayerState.ON
+                self._attr_is_volume_muted = False
+                self.async_write_ha_state()
+                _LOGGER.warning("🔥 SUCCESS: Zone %d (%s) turned on successfully", self._zone_id, self._zone_name)
+            else:
+                _LOGGER.error("🔥 FAILED: Failed to turn on zone %d (%s)", self._zone_id, self._zone_name)
         except Exception as err:
-            _LOGGER.error("Error turning on zone %s: %s", self._zone_id, err)
+            _LOGGER.error("🔥 ERROR: Exception turning on zone %s: %s", self._zone_id, err)
 
     async def async_turn_off(self) -> None:
         """Turn the zone off."""
         try:
-            await self._hass.async_add_executor_job(
-                self._knox.set_mute,
-                self._zone_id,
-                True,  # Mute
-            )
-            self._attr_state = MediaPlayerState.OFF
-            self._attr_is_volume_muted = True
-            self.async_write_ha_state()
+            # Use async method to prevent cross-zone interference
+            result = await self._knox.set_mute_async(self._zone_id, True)
+            if result:
+                self._attr_state = MediaPlayerState.OFF
+                self._attr_is_volume_muted = True
+                self.async_write_ha_state()
+                _LOGGER.debug("Zone %d turned off successfully", self._zone_id)
+            else:
+                _LOGGER.error("Failed to turn off zone %d", self._zone_id)
         except Exception as err:
             _LOGGER.error("Error turning off zone %s: %s", self._zone_id, err)
 
@@ -328,37 +388,36 @@ class KnoxMediaPlayer(MediaPlayerEntity):
         """Set the volume level."""
         try:
             _LOGGER.debug("VOLUME CHANGE: User setting volume %.2f for zone %d", volume, self._zone_id)
-            _LOGGER.debug("DEBUG: Setting volume level %.2f for zone %d", volume, self._zone_id)
             # Convert volume (0-1) to Knox scale (0-63)
             # volume is 0-1 from HA, where 0 is lowest and 1 is highest
             # Knox uses 0 (lowest) to 63 (highest)
             volume_knox = int((1 - volume) * 63)  # This will map 0->63 and 1->0
-            _LOGGER.debug("DEBUG: HA volume %.2f -> Knox volume %d (formula: int((1 - %.2f) * 63))", volume, volume_knox, volume)
+            _LOGGER.debug("VOLUME CHANGE: HA volume %.2f -> Knox volume %d", volume, volume_knox)
             
-            result = await self._hass.async_add_executor_job(
-                self._knox.set_volume,
-                self._zone_id,
-                volume_knox,
-            )
-            _LOGGER.debug("DEBUG: set_volume returned: %s", result)
-            self._attr_volume_level = volume
-            self.async_write_ha_state()
+            # Use async method to prevent cross-zone interference
+            result = await self._knox.set_volume_async(self._zone_id, volume_knox)
+            if result:
+                self._attr_volume_level = volume
+                self.async_write_ha_state()
+                _LOGGER.debug("Volume for zone %d set successfully to %.2f", self._zone_id, volume)
+            else:
+                _LOGGER.error("Failed to set volume for zone %d", self._zone_id)
         except Exception as err:
-            _LOGGER.error("DEBUG: Error setting volume for zone %s: %s", self._zone_id, err)
+            _LOGGER.error("Error setting volume for zone %s: %s", self._zone_id, err)
 
     async def async_mute_volume(self, mute: bool) -> None:
         """Mute or unmute the zone."""
         try:
             _LOGGER.debug("MUTE CHANGE: User %s zone %d", "muting" if mute else "unmuting", self._zone_id)
-            result = await self._hass.async_add_executor_job(
-                self._knox.set_mute,
-                self._zone_id,
-                mute,
-            )
-            _LOGGER.debug("MUTE CHANGE: Knox returned: %s", result)
-            self._attr_is_volume_muted = mute # Optimistically update internal state
-            self._attr_state = MediaPlayerState.OFF if mute else MediaPlayerState.ON # Optimistically update internal state
-            self.async_write_ha_state()
+            # Use async method to prevent cross-zone interference
+            result = await self._knox.set_mute_async(self._zone_id, mute)
+            if result:
+                self._attr_is_volume_muted = mute
+                self._attr_state = MediaPlayerState.OFF if mute else MediaPlayerState.ON
+                self.async_write_ha_state()
+                _LOGGER.debug("Zone %d %s successfully", self._zone_id, "muted" if mute else "unmuted")
+            else:
+                _LOGGER.error("Failed to %s zone %d", "mute" if mute else "unmute", self._zone_id)
         except Exception as err:
             _LOGGER.error("Error setting mute for zone %s: %s", self._zone_id, err)
 
@@ -378,16 +437,14 @@ class KnoxMediaPlayer(MediaPlayerEntity):
             
             if input_id is not None:
                 _LOGGER.debug("SOURCE CHANGE: Mapping '%s' -> input_id %d", source, input_id)
-                _LOGGER.debug("DEBUG: Setting input %d for zone %d", input_id, self._zone_id)
-                result = await self._hass.async_add_executor_job(
-                    self._knox.set_input,
-                    self._zone_id,
-                    input_id,
-                )
-                _LOGGER.debug("SOURCE CHANGE: Knox returned: %s", result)
-                _LOGGER.debug("DEBUG: set_input returned: %s", result)
-                self._attr_source = source # Optimistically update internal state
-                self.async_write_ha_state()
+                # Use async method to prevent cross-zone interference
+                result = await self._knox.set_input_async(self._zone_id, input_id)
+                if result:
+                    self._attr_source = source
+                    self.async_write_ha_state()
+                    _LOGGER.debug("Source for zone %d set successfully to '%s'", self._zone_id, source)
+                else:
+                    _LOGGER.error("Failed to set input for zone %d", self._zone_id)
             else:
                 _LOGGER.error("SOURCE CHANGE ERROR: No input_id found for source '%s'", source)
                 _LOGGER.error("SOURCE CHANGE ERROR: Available inputs: %s", self._inputs)
@@ -407,14 +464,17 @@ class KnoxMediaPlayer(MediaPlayerEntity):
 
     async def async_update(self) -> None:
         """Update the state of the zone."""
+        # EMERGENCY: Disable automatic polling due to Knox device corruption issues
+        # The Knox device is returning garbled responses and can't handle the polling load
+        # Only update state when user explicitly requests it via services
+        _LOGGER.debug("DISABLED: Automatic polling disabled due to Knox device issues")
+        return
+        
         try:
             _LOGGER.debug("DEBUG: Updating state for zone %d", self._zone_id)
             
-            # Get current volume from Knox (0 to 63)
-            volume_knox = await self._hass.async_add_executor_job(
-                self._knox.get_volume,
-                self._zone_id,
-            )
+            # Get current volume from Knox (0 to 63) - using async method to prevent interference
+            volume_knox = await self._knox.get_volume_async(self._zone_id)
             _LOGGER.debug("DEBUG: Retrieved Knox volume: %s", volume_knox)
             
             # Only update volume if we got a valid value
@@ -427,11 +487,8 @@ class KnoxMediaPlayer(MediaPlayerEntity):
             else:
                 _LOGGER.debug("DEBUG: No volume value returned for zone %s", self._zone_id)
 
-            # Get mute state
-            is_muted = await self._hass.async_add_executor_job(
-                self._knox.get_mute,
-                self._zone_id,
-            )
+            # Get mute state - using async method to prevent interference
+            is_muted = await self._knox.get_mute_async(self._zone_id)
             _LOGGER.debug("DEBUG: Retrieved mute state: %s", is_muted)
             
             if is_muted is not None:
@@ -444,11 +501,8 @@ class KnoxMediaPlayer(MediaPlayerEntity):
             else:
                 _LOGGER.debug("DEBUG: No mute state returned for zone %s", self._zone_id)
 
-            # Get current input
-            current_input = await self._hass.async_add_executor_job(
-                self._knox.get_input,
-                self._zone_id,
-            )
+            # Get current input - using async method to prevent interference
+            current_input = await self._knox.get_input_async(self._zone_id)
             _LOGGER.debug("DEBUG: Retrieved current input: %s", current_input)
             
             # Always update input source - Knox device is source of truth  
@@ -490,6 +544,9 @@ class KnoxMediaPlayer(MediaPlayerEntity):
         if self._debug_cancel_polling:
             self._debug_cancel_polling()
             self._debug_cancel_polling = None
+        if self._gentle_cancel_polling:
+            self._gentle_cancel_polling()
+            self._gentle_cancel_polling = None
         
     async def async_debug_command(self, command: str, expect_response: bool = True) -> None:
         """Send a raw command to the Knox device for debugging."""
@@ -665,6 +722,55 @@ class KnoxMediaPlayer(MediaPlayerEntity):
             self._debug_cancel_polling = None
             
         _LOGGER.info("DEBUG SERVICE: Stopped debug polling for zone %d", self._zone_id)
+        
+    async def async_start_gentle_polling(self, interval_minutes: int = 5) -> None:
+        """Start gentle periodic polling to keep state in sync."""
+        if self._gentle_polling:
+            _LOGGER.info("GENTLE POLL: Already active for zone %d", self._zone_id)
+            return
+            
+        self._gentle_polling = True
+        self._gentle_polling_interval = interval_minutes * 60  # Convert to seconds
+        _LOGGER.info("GENTLE POLL: Starting gentle polling every %d minutes for zone %d", interval_minutes, self._zone_id)
+        
+        async def _gentle_poll():
+            if not self._gentle_polling:
+                return
+            try:
+                # Only poll if zone is currently ON to reduce Knox load
+                if self._attr_state == MediaPlayerState.ON:
+                    _LOGGER.debug("GENTLE POLL: Syncing zone %d state (currently ON)", self._zone_id)
+                    
+                    # Only check mute status - most likely to change externally
+                    is_muted = await self._knox.get_mute_async(self._zone_id)
+                    if is_muted is not None and is_muted != self._attr_is_volume_muted:
+                        _LOGGER.info("GENTLE POLL: Zone %d mute changed %s -> %s", 
+                                   self._zone_id, self._attr_is_volume_muted, is_muted)
+                        self._attr_is_volume_muted = is_muted
+                        self._attr_state = MediaPlayerState.OFF if is_muted else MediaPlayerState.ON
+                        self.async_write_ha_state()
+                else:
+                    _LOGGER.debug("GENTLE POLL: Skipping zone %d (currently OFF)", self._zone_id)
+                    
+            except Exception as err:
+                _LOGGER.error("GENTLE POLL: Error polling zone %d: %s", self._zone_id, err)
+        
+        self._gentle_cancel_polling = async_track_time_interval(
+            self._hass, lambda _: asyncio.create_task(_gentle_poll()), timedelta(seconds=self._gentle_polling_interval)
+        )
+        
+    async def async_stop_gentle_polling(self) -> None:
+        """Stop gentle polling."""
+        if not self._gentle_polling:
+            _LOGGER.info("GENTLE POLL: Not active for zone %d", self._zone_id)
+            return
+            
+        self._gentle_polling = False
+        if self._gentle_cancel_polling:
+            self._gentle_cancel_polling()
+            self._gentle_cancel_polling = None
+            
+        _LOGGER.info("GENTLE POLL: Stopped gentle polling for zone %d", self._zone_id)
         
     async def async_test_volume_conversion(self) -> None:
         """Test volume conversion between HA and Knox scales."""
@@ -1199,3 +1305,97 @@ class KnoxMediaPlayer(MediaPlayerEntity):
             
         except Exception as err:
             _LOGGER.error("BASIC TEST ERROR: %s", err)
+            
+    async def async_emergency_isolation_test(self) -> None:
+        """Emergency test to check if commands are being broadcast or corrupted."""
+        _LOGGER.error("🚨 EMERGENCY ISOLATION TEST for Zone %d (%s) 🚨", self._zone_id, self._zone_name)
+        
+        try:
+            # Test 1: Send a very specific command that should only affect this zone
+            _LOGGER.error("TEST 1: Sending ONLY to zone %d - no other zones should change", self._zone_id)
+            specific_command = f"$M{self._zone_id:02d}0"  # Unmute only this zone
+            _LOGGER.error("  Command: %s", specific_command)
+            
+            response = await self._hass.async_add_executor_job(
+                self._knox._send_command, specific_command
+            )
+            _LOGGER.error("  Response: %s", repr(response))
+            
+            # Test 2: Check if Knox is interpreting our zone numbers correctly
+            _LOGGER.error("TEST 2: Checking zone number interpretation")
+            _LOGGER.error("  Configured zone ID: %d", self._zone_id)
+            _LOGGER.error("  Zone name: %s", self._zone_name)
+            _LOGGER.error("  Expected command format: $M%02d0", self._zone_id)
+            _LOGGER.error("  Actual command sent: %s", specific_command)
+            
+            # Test 3: Query this specific zone
+            _LOGGER.error("TEST 3: Querying zone %d state", self._zone_id)
+            query_command = f"$D{self._zone_id:02d}"
+            query_response = await self._hass.async_add_executor_job(
+                self._knox._send_command, query_command
+            )
+            _LOGGER.error("  Query command: %s", query_command)
+            _LOGGER.error("  Query response: %s", repr(query_response))
+            
+            # Test 4: Check if there are any broadcast patterns
+            _LOGGER.error("TEST 4: WARNING - If other zones changed, there's a serious hardware/firmware issue!")
+            _LOGGER.error("  Only zone %d (%s) should have changed state", self._zone_id, self._zone_name)
+            _LOGGER.error("  Check ALL your other zones now!")
+            
+        except Exception as err:
+            _LOGGER.error("EMERGENCY TEST ERROR: %s", err)
+            
+    async def async_system_reboot(self) -> None:
+        """Attempt to reboot the Knox system using various potential commands."""
+        _LOGGER.error("🔄 SYSTEM REBOOT: Attempting to reboot Knox device")
+        
+        # Common Knox/industrial control system reboot commands to try
+        reboot_commands = [
+            ("*RESET", "Global reset command"),
+            ("RESET", "Simple reset"),
+            ("*REBOOT", "Global reboot command"), 
+            ("REBOOT", "Simple reboot"),
+            ("*RESTART", "Global restart command"),
+            ("RESTART", "Simple restart"),
+            ("*INIT", "Global initialize command"),
+            ("INIT", "Simple initialize"),
+            ("*SYS RESET", "System reset command"),
+            ("SYS RESET", "System reset"),
+            ("*R", "Short reset command"),
+            ("R", "Single character reset"),
+            ("!", "System attention command"),
+            ("*!", "Global attention command"),
+            ("CLEAR", "Clear/reset command"),
+            ("*CLEAR", "Global clear command"),
+        ]
+        
+        try:
+            _LOGGER.error("🔄 WARNING: About to attempt Knox system reboot")
+            _LOGGER.error("🔄 This may disconnect all zones temporarily")
+            
+            for command, description in reboot_commands:
+                _LOGGER.error("🔄 Trying: %s (%s)", command, description)
+                try:
+                    response = await self._hass.async_add_executor_job(
+                        self._knox._send_command, command
+                    )
+                    _LOGGER.error("🔄 Response to '%s': %s", command, repr(response))
+                    
+                    # Check if response suggests success
+                    if any(word in response.upper() for word in ["REBOOT", "RESET", "RESTART", "INIT", "OK", "DONE"]):
+                        _LOGGER.error("🔄 SUCCESS: Command '%s' may have triggered reboot!", command)
+                        _LOGGER.error("🔄 Knox device should be rebooting now...")
+                        _LOGGER.error("🔄 Wait 30-60 seconds before testing zones again")
+                        return
+                        
+                    await asyncio.sleep(1)  # Small delay between attempts
+                    
+                except Exception as cmd_err:
+                    _LOGGER.error("🔄 Command '%s' failed: %s", command, cmd_err)
+                    continue
+            
+            _LOGGER.error("🔄 FAILED: No reboot command worked")
+            _LOGGER.error("🔄 You may need to physically power cycle the Knox device")
+            
+        except Exception as err:
+            _LOGGER.error("🔄 SYSTEM REBOOT ERROR: %s", err)
