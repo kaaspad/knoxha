@@ -27,7 +27,7 @@ from .const import (
     DEFAULT_INPUT_NAMES,
     DEFAULT_INPUT,
 )
-from .pyknox import get_knox
+from .chameleon_client import ChameleonClient, ChameleonError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -61,12 +61,16 @@ class KnoxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             try:
                 # Test connection
-                knox = await self.hass.async_add_executor_job(
-                    get_knox,
-                    user_input[CONF_HOST],
-                    user_input[CONF_PORT],
+                client = ChameleonClient(
+                    host=user_input[CONF_HOST],
+                    port=user_input[CONF_PORT],
                 )
-                await self.hass.async_add_executor_job(knox.disconnect)
+                await client.connect()
+                connection_ok = await client.test_connection()
+                await client.disconnect()
+
+                if not connection_ok:
+                    raise ChameleonError("Connection test failed")
 
                 # Create entry with basic defaults - zones/inputs configured via options
                 return self.async_create_entry(
@@ -79,7 +83,7 @@ class KnoxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     },
                 )
 
-            except Exception as err:
+            except (ChameleonError, Exception) as err:
                 _LOGGER.error("Error connecting to Knox device: %s", err)
                 errors["base"] = "cannot_connect"
 
@@ -104,12 +108,16 @@ class KnoxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             try:
                 # Test new connection
-                knox = await self.hass.async_add_executor_job(
-                    get_knox,
-                    user_input[CONF_HOST],
-                    user_input[CONF_PORT],
+                client = ChameleonClient(
+                    host=user_input[CONF_HOST],
+                    port=user_input[CONF_PORT],
                 )
-                await self.hass.async_add_executor_job(knox.disconnect)
+                await client.connect()
+                connection_ok = await client.test_connection()
+                await client.disconnect()
+
+                if not connection_ok:
+                    raise ChameleonError("Connection test failed")
 
                 # Update entry with new connection info, preserve zones/inputs
                 new_data = entry.data.copy()
@@ -121,7 +129,7 @@ class KnoxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 
                 return self.async_abort(reason="reconfigure_successful")
 
-            except Exception as err:
+            except (ChameleonError, Exception) as err:
                 _LOGGER.error("Error connecting to Knox device: %s", err)
                 errors["base"] = "cannot_connect"
 
