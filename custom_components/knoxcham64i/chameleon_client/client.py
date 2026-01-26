@@ -440,22 +440,101 @@ class ChameleonClient:
         Returns:
             Dict mapping zone number to ZoneState
 
-        Note: Currently fetches zones individually. Could be optimized
-              with batch queries using get_crosspoint("D0164") for range.
+        Optimized approach:
+        1. Fetch crosspoint data ONCE for all zones (D0136)
+        2. Parse to get input_id for all zones
+        3. Fetch VTB data concurrently for each zone ($Dxx)
+        This reduces from 2N commands to 1 + N commands.
         """
         states = {}
 
-        # Fetch all zone states concurrently
-        tasks = [self.get_zone_state(zone) for zone in zones]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # Step 1: Fetch crosspoint data for all zones 1-36 with a single command
+        crosspoint_map = {}  # zone_id -> input_id
+        try:
+            cp_command = self._commands.get_crosspoint(1)  # Returns D0136
+            cp_response = await self._send_command(cp_command)
+            cp_result = self._parse_response(cp_response)
 
-        for zone, result in zip(zones, results):
-            if isinstance(result, Exception):
-                _LOGGER.warning("Failed to get state for zone %d: %s", zone, result)
-                # Create empty state
-                states[zone] = ZoneState(zone_id=zone)
+            if cp_result.get("success") and "data" in cp_result:
+                cp_data = cp_result["data"]
+                lines = cp_data.split('\n')
+
+                for line in lines:
+                    if line.strip().startswith("OUTPUT"):
+                        parts = line.split()
+                        if len(parts) >= 6:
+                            try:
+                                output_num = int(parts[1])
+                                video_input = int(parts[3])
+                                crosspoint_map[output_num] = video_input
+                            except (ValueError, IndexError):
+                                continue
+
+                _LOGGER.debug("Fetched crosspoint data for %d zones in one command", len(crosspoint_map))
+        except Exception as err:
+            _LOGGER.warning("Failed to fetch crosspoint data: %s", err)
+
+        # Step 2: Fetch VTB data concurrently for each requested zone
+        async def get_vtb_for_zone(zone: int) -> tuple[int, Optional[dict]]:
+            """Fetch VTB data for a single zone."""
+            try:
+                vtb_command = self._commands.get_vtb(zone)
+                vtb_response = await self._send_command(vtb_command)
+                vtb_result = self._parse_response(vtb_response)
+
+                if vtb_result.get("success") and "data" in vtb_result:
+                    return zone, vtb_result["data"]
+            except Exception as err:
+                _LOGGER.debug("Failed to get VTB for zone %d: %s", zone, err)
+
+            return zone, None
+
+        # Fetch VTB data for all zones concurrently
+        vtb_tasks = [get_vtb_for_zone(zone) for zone in zones]
+        vtb_results = await asyncio.gather(*vtb_tasks, return_exceptions=True)
+
+        # Step 3: Build ZoneState objects combining crosspoint + VTB data
+        for zone in zones:
+            state = ZoneState(zone_id=zone)
+
+            # Add crosspoint data (input_id) if available
+            if zone in crosspoint_map:
+                state.input_id = crosspoint_map[zone]
+
+            # Add VTB data (volume, mute) if available
+            vtb_data = None
+            for result in vtb_results:
+                if isinstance(result, Exception):
+                    continue
+                if result[0] == zone and result[1] is not None:
+                    vtb_data = result[1]
+                    break
+
+            if vtb_data:
+                # Parse volume
+                volume_match = re.search(r'V:([+-]?\d+)', vtb_data)
+                if volume_match:
+                    volume = int(volume_match.group(1))
+                    if 0 <= volume <= 63:
+                        state.volume = volume
+                    else:
+                        # Invalid volume, use fallback
+                        state.volume = min(zone, 40)
+                else:
+                    state.volume = min(zone, 40)
+
+                # Parse mute
+                mute_match = re.search(r'M:(\d+)', vtb_data)
+                if mute_match:
+                    state.is_muted = (int(mute_match.group(1)) == 1)
+                else:
+                    state.is_muted = False
             else:
-                states[zone] = result
+                # No VTB data, use defaults
+                state.volume = min(zone, 40)
+                state.is_muted = False
+
+            states[zone] = state
 
         return states
 

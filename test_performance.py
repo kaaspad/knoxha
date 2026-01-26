@@ -17,13 +17,14 @@ async def test():
         print("PERFORMANCE TEST")
         print("="*60)
 
-        # Test 1: Get 3 zones sequentially
+        # Test 1: Get 3 zones using optimized batch method
         start = time.time()
+        states = await client.get_all_zones_state([1, 2, 25])
         for zone in [1, 2, 25]:
-            state = await client.get_zone_state(zone)
+            state = states[zone]
             print(f"Zone {zone}: input={state.input_id}, vol={state.volume}, mute={state.is_muted}")
         elapsed = time.time() - start
-        print(f"\n⏱️  Time to get 3 zones: {elapsed:.2f} seconds")
+        print(f"\n⏱️  Time to get 3 zones (optimized): {elapsed:.2f} seconds")
 
         # Test 2: Set input
         print("\n" + "-"*60)

@@ -207,7 +207,10 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
         """Turn the zone on (unmute)."""
         try:
             await self._client.set_mute(self._zone_id, False)
-            await self.coordinator.async_request_refresh()
+            # Update local state immediately for responsiveness
+            if self._zone_id in self.coordinator.data:
+                self.coordinator.data[self._zone_id].is_muted = False
+            self.async_write_ha_state()
         except ChameleonError as err:
             _LOGGER.error("Failed to turn on zone %d: %s", self._zone_id, err)
 
@@ -215,7 +218,10 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
         """Turn the zone off (mute)."""
         try:
             await self._client.set_mute(self._zone_id, True)
-            await self.coordinator.async_request_refresh()
+            # Update local state immediately for responsiveness
+            if self._zone_id in self.coordinator.data:
+                self.coordinator.data[self._zone_id].is_muted = True
+            self.async_write_ha_state()
         except ChameleonError as err:
             _LOGGER.error("Failed to turn off zone %d: %s", self._zone_id, err)
 
@@ -229,7 +235,10 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
             knox_volume = max(0, min(63, knox_volume))  # Clamp to valid range
 
             await self._client.set_volume(self._zone_id, knox_volume)
-            await self.coordinator.async_request_refresh()
+            # Update local state immediately for responsiveness
+            if self._zone_id in self.coordinator.data:
+                self.coordinator.data[self._zone_id].volume = knox_volume
+            self.async_write_ha_state()
         except ChameleonError as err:
             _LOGGER.error(
                 "Failed to set volume for zone %d: %s", self._zone_id, err
@@ -239,7 +248,10 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
         """Mute or unmute the zone."""
         try:
             await self._client.set_mute(self._zone_id, mute)
-            await self.coordinator.async_request_refresh()
+            # Update local state immediately for responsiveness
+            if self._zone_id in self.coordinator.data:
+                self.coordinator.data[self._zone_id].is_muted = mute
+            self.async_write_ha_state()
         except ChameleonError as err:
             _LOGGER.error(
                 "Failed to %s zone %d: %s",
@@ -263,7 +275,10 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
                 return
 
             await self._client.set_input(self._zone_id, input_id)
-            await self.coordinator.async_request_refresh()
+            # Update local state immediately for responsiveness
+            if self._zone_id in self.coordinator.data:
+                self.coordinator.data[self._zone_id].input_id = input_id
+            self.async_write_ha_state()
         except ChameleonError as err:
             _LOGGER.error(
                 "Failed to select source %s for zone %d: %s",
