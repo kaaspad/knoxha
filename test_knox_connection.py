@@ -39,21 +39,21 @@ async def test_knox():
         except Exception as e:
             print(f"❌ Firmware command failed: {e}\n")
 
-        # Test 3: Zone 28 state
-        print("Test 3: Getting zone 28 state...")
+        # Test 3: Zone 25 state
+        print("Test 3: Getting zone 25 state...")
         try:
-            state = await client.get_zone_state(28)
-            print(f"✅ Zone 28 State:")
+            state = await client.get_zone_state(25)
+            print(f"✅ Zone 25 State:")
             print(f"   - Input ID: {state.input_id}")
             print(f"   - Volume: {state.volume} (0-63, 0=loudest)")
             print(f"   - Muted: {state.is_muted}\n")
         except Exception as e:
-            print(f"❌ Zone 28 state failed: {e}\n")
+            print(f"❌ Zone 25 state failed: {e}\n")
 
         # Test 4: Set input test
-        print("Test 4: Testing input change (zone 28 → input 1)...")
+        print("Test 4: Testing input change (zone 25 → input 1)...")
         try:
-            result = await client.set_input(28, 1)
+            result = await client.set_input(25, 1)
             if result:
                 print("✅ Set input command accepted\n")
             else:
@@ -62,24 +62,24 @@ async def test_knox():
             print(f"❌ Set input failed: {e}\n")
 
         # Test 5: Volume control test
-        print("Test 5: Testing volume control (zone 28)...")
+        print("Test 5: Testing volume control (zone 25)...")
         try:
             # Save current volume
-            current_state = await client.get_zone_state(28)
+            current_state = await client.get_zone_state(25)
             original_volume = current_state.volume if current_state.volume is not None else 30
 
             # Test setting volume to 20 (mid-level)
-            result = await client.set_volume(28, 20)
+            result = await client.set_volume(25, 20)
             if result:
                 print("✅ Set volume command accepted")
 
                 # Verify it changed
                 await asyncio.sleep(0.5)
-                new_state = await client.get_zone_state(28)
+                new_state = await client.get_zone_state(25)
                 print(f"   - New volume: {new_state.volume}\n")
 
                 # Restore original volume
-                await client.set_volume(28, original_volume)
+                await client.set_volume(25, original_volume)
                 print(f"   - Restored to: {original_volume}\n")
             else:
                 print("⚠️  Set volume command not confirmed\n")
@@ -87,20 +87,20 @@ async def test_knox():
             print(f"❌ Volume test failed: {e}\n")
 
         # Test 6: Mute control test
-        print("Test 6: Testing mute control (zone 28)...")
+        print("Test 6: Testing mute control (zone 25)...")
         try:
             # Get current mute state
-            current_state = await client.get_zone_state(28)
+            current_state = await client.get_zone_state(25)
             original_mute = current_state.is_muted
 
             # Toggle mute
-            result = await client.set_mute(28, not original_mute)
+            result = await client.set_mute(25, not original_mute)
             if result:
                 print(f"✅ Set mute to {not original_mute}")
 
                 # Restore original
                 await asyncio.sleep(0.5)
-                await client.set_mute(28, original_mute)
+                await client.set_mute(25, original_mute)
                 print(f"   - Restored to: {original_mute}\n")
             else:
                 print("⚠️  Set mute command not confirmed\n")
@@ -110,7 +110,7 @@ async def test_knox():
         # Test 7: Multiple zones state (test coordinator behavior)
         print("Test 7: Testing multiple zones state fetch...")
         try:
-            zones = [28, 1, 2]  # Test a few zones
+            zones = [25, 1, 2]  # Test a few zones
             states = await client.get_all_zones_state(zones)
             print(f"✅ Retrieved {len(states)} zone states:")
             for zone_id, state in states.items():

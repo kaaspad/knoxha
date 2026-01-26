@@ -15,8 +15,8 @@ async def test_raw_commands(client):
     print("="*60)
 
     commands = [
-        ("D28", "Get crosspoint for zone 28"),
-        ("$D28", "Get VTB (volume/tone/balance) for zone 28"),
+        ("D25", "Get crosspoint for zone 25"),
+        ("$D25", "Get VTB (volume/tone/balance) for zone 25"),
         ("I", "Get firmware version"),
         ("D0136", "Get crosspoint range 1-36"),
     ]
@@ -176,8 +176,8 @@ async def test_crosspoint_parsing(client):
     print("="*60)
 
     # Get raw crosspoint response
-    print("\nSending D28 command...")
-    response = await client._connection.send_command("D28")
+    print("\nSending D25 command...")
+    response = await client._connection.send_command("D25")
     print(f"\nRaw response:\n{repr(response)}")
 
     # Try to parse it
@@ -234,9 +234,9 @@ async def main():
             if len(active_zones) > 0:
                 await test_zone_operations(client, active_zones[0])
 
-            # Test zone 28 specifically since you mentioned it
-            if 28 in active_zones or True:  # Always test 28
-                await test_zone_operations(client, 28)
+            # Test zone 25 specifically (user is physically in that room)
+            if 25 in active_zones or True:  # Always test 25
+                await test_zone_operations(client, 25)
 
         print("\n" + "="*60)
         print("DIAGNOSTIC COMPLETE")

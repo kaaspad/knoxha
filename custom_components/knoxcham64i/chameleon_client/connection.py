@@ -177,13 +177,15 @@ class ChameleonConnection:
 
             # Read response with proper blocking behavior
             # Old code's recv() blocked waiting for data - we need to simulate that
+            # CRITICAL: For 36 zones, response can be 4KB+, must read until DONE/ERROR!
             response_data = bytearray()
             deadline = asyncio.get_event_loop().time() + self.timeout
 
             while asyncio.get_event_loop().time() < deadline:
                 try:
                     # Read with 2 second timeout (like old code's socket timeout)
-                    chunk = await asyncio.wait_for(reader.read(1024), timeout=2.0)
+                    # Use 4KB chunks to handle large responses (36 zones = ~3KB)
+                    chunk = await asyncio.wait_for(reader.read(4096), timeout=2.0)
 
                     if chunk:
                         response_data.extend(chunk)
@@ -191,18 +193,32 @@ class ChameleonConnection:
                         # Check if we have a complete response
                         response_str = response_data.decode("utf-8", errors="ignore")
 
-                        # If we have DONE or ERROR, we're done
+                        # ONLY stop if we have DONE or ERROR terminator
+                        # Don't stop early just because we have data!
                         if "DONE" in response_str or "ERROR" in response_str:
+                            _LOGGER.debug("Got terminator, complete response (%d bytes)", len(response_data))
                             break
 
-                        # If we have substantial data (not just echo), wait a bit for more
-                        if len(response_data) > len(command) + 5:  # More than just echo
-                            try:
-                                extra = await asyncio.wait_for(reader.read(512), timeout=0.2)
-                                if extra:
-                                    response_data.extend(extra)
-                            except asyncio.TimeoutError:
-                                pass
+                        # If we got a full 4KB chunk, there might be more coming
+                        # Keep reading with a short timeout to get the rest
+                        if len(chunk) >= 4096:
+                            _LOGGER.debug("Got full chunk, reading more...")
+                            continue
+
+                        # If chunk was small (< 4KB), wait briefly for more data
+                        # Knox might send data in bursts
+                        try:
+                            extra = await asyncio.wait_for(reader.read(4096), timeout=0.3)
+                            if extra:
+                                response_data.extend(extra)
+                                _LOGGER.debug("Got extra %d bytes", len(extra))
+                                # Continue loop to check for terminator
+                            else:
+                                # No more data coming
+                                break
+                        except asyncio.TimeoutError:
+                            # No more data after 0.3s, response is complete
+                            _LOGGER.debug("No more data after small chunk, complete (%d bytes)", len(response_data))
                             break
                     else:
                         # Empty read = connection closed
@@ -211,6 +227,7 @@ class ChameleonConnection:
                 except asyncio.TimeoutError:
                     # Timeout waiting for chunk - if we have data, that's our response
                     if len(response_data) > 0:
+                        _LOGGER.debug("Timeout with %d bytes, assuming complete", len(response_data))
                         break
                     # Otherwise keep waiting
 
