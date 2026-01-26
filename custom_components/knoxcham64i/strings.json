@@ -1,0 +1,127 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Knox Chameleon64i",
+        "description": "Enter the connection details for your Knox Chameleon64i device.",
+        "data": {
+          "host": "Host IP Address",
+          "port": "Port"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Knox Connection",
+        "description": "Update the connection settings for your Knox device.",
+        "data": {
+          "host": "Host IP Address",
+          "port": "Port"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the Knox device. Please check the IP address and port.",
+      "unknown": "An unexpected error occurred. Please try again."
+    },
+    "abort": {
+      "already_configured": "This Knox device is already configured.",
+      "reconfigure_successful": "Connection settings updated successfully."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Knox Chameleon64i Configuration",
+        "description": "Choose what you want to configure",
+        "menu_options": {
+          "manage_zones": "Manage Output Zones",
+          "manage_inputs": "Manage Input Sources",
+          "import_zones_csv": "Import Zones from CSV"
+        }
+      },
+      "manage_zones": {
+        "title": "Manage Output Zones",
+        "description": "Choose a zone management option",
+        "menu_options": {
+          "add_zone": "Add a Zone",
+          "remove_zone": "Remove a Zone",
+          "list_zones": "View All Zones"
+        }
+      },
+      "manage_inputs": {
+        "title": "Manage Input Sources",
+        "description": "Choose an input management option",
+        "menu_options": {
+          "add_input": "Add an Input",
+          "remove_input": "Remove an Input",
+          "list_inputs": "View All Inputs"
+        }
+      },
+      "add_zone": {
+        "title": "Add Output Zone",
+        "description": "Currently configured: {zones_count} zones\n\nSelect a zone ID and enter a friendly name.",
+        "data": {
+          "zone_id": "Zone ID",
+          "zone_name": "Zone Name"
+        }
+      },
+      "remove_zone": {
+        "title": "Remove Output Zone",
+        "description": "Select a zone to remove from the configuration.",
+        "data": {
+          "zone_to_remove": "Zone to Remove"
+        }
+      },
+      "list_zones": {
+        "title": "Configured Output Zones",
+        "description": "{zones_list}\n\nPress Submit to return to the menu."
+      },
+      "add_input": {
+        "title": "Add Input Source",
+        "description": "Currently configured: {inputs_count} inputs\n\nSelect an input ID and enter a friendly name.",
+        "data": {
+          "input_id": "Input ID",
+          "input_name": "Input Name"
+        }
+      },
+      "remove_input": {
+        "title": "Remove Input Source",
+        "description": "Select an input to remove from the configuration.",
+        "data": {
+          "input_to_remove": "Input to Remove"
+        }
+      },
+      "list_inputs": {
+        "title": "Configured Input Sources",
+        "description": "{inputs_list}\n\nPress Submit to return to the menu."
+      },
+      "import_zones_csv": {
+        "title": "Import Zones from CSV",
+        "description": "Currently configured: {current_count} zones\n\nPaste your CSV data below. Format: Zone ID, Zone Name\n\nExample:\n{example_csv}\n\nYou can include a header row (will be automatically detected and skipped).",
+        "data": {
+          "csv_data": "CSV Data"
+        }
+      },
+      "import_success": {
+        "title": "Import Successful",
+        "description": "Successfully imported zones!\n\nTotal zones now configured: {zones_count}\n\nPress Submit to return to the main menu."
+      }
+    },
+    "error": {
+      "zone_already_exists": "This zone ID is already configured.",
+      "zone_name_required": "Please enter a name for the zone.",
+      "zone_id_required": "Please select a zone ID.",
+      "input_already_exists": "This input ID is already configured.",
+      "input_name_required": "Please enter a name for the input.",
+      "input_id_required": "Please select an input ID.",
+      "csv_data_required": "Please paste CSV data to import.",
+      "no_valid_zones": "No valid zones found in the CSV data. Please check the format.",
+      "csv_parse_error": "Error parsing CSV data. Please check the format and try again."
+    },
+    "abort": {
+      "no_zones_configured": "No zones are currently configured. Please add zones first.",
+      "no_inputs_configured": "No inputs are currently configured. Please add inputs first.",
+      "all_zones_configured": "All 64 zones are already configured.",
+      "all_inputs_configured": "All 64 inputs are already configured."
+    }
+  }
+}
