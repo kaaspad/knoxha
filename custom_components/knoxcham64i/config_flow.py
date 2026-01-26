@@ -23,6 +23,7 @@ from .const import (
     CONF_INPUTS,
     CONF_ZONE_NAME,
     CONF_ZONE_ID,
+    CONF_HA_AREA,
     CONF_INPUT_NAME,
     CONF_INPUT_ID,
 )
@@ -189,6 +190,7 @@ class KnoxOptionsFlowHandler(config_entries.OptionsFlow):
         if user_input is not None:
             zone_id = user_input[CONF_ZONE_ID]
             zone_name = user_input[CONF_ZONE_NAME].strip()
+            ha_area = user_input.get(CONF_HA_AREA, "").strip()
 
             # Check for duplicates
             if any(zone[CONF_ZONE_ID] == zone_id for zone in self._zones):
@@ -197,10 +199,14 @@ class KnoxOptionsFlowHandler(config_entries.OptionsFlow):
                 errors[CONF_ZONE_NAME] = "zone_name_required"
             else:
                 # Add zone
-                self._zones.append({
+                zone_config = {
                     CONF_ZONE_ID: zone_id,
                     CONF_ZONE_NAME: zone_name,
-                })
+                }
+                if ha_area:
+                    zone_config[CONF_HA_AREA] = ha_area
+
+                self._zones.append(zone_config)
                 self._zones.sort(key=lambda x: x[CONF_ZONE_ID])
                 await self._save_config()
                 return await self.async_step_manage_zones()
@@ -220,6 +226,7 @@ class KnoxOptionsFlowHandler(config_entries.OptionsFlow):
                     for zone_id in available_ids
                 }),
                 vol.Required(CONF_ZONE_NAME): str,
+                vol.Optional(CONF_HA_AREA): selector.AreaSelector(),
             }),
             errors=errors,
             description_placeholders={
@@ -300,11 +307,16 @@ class KnoxOptionsFlowHandler(config_entries.OptionsFlow):
                             try:
                                 zone_id = int(first_row[0].strip())
                                 zone_name = first_row[1].strip()
+                                ha_area = first_row[2].strip() if len(first_row) >= 3 else ""
+
                                 if 1 <= zone_id <= 64 and zone_name:
-                                    imported_zones.append({
+                                    zone_config = {
                                         CONF_ZONE_ID: zone_id,
                                         CONF_ZONE_NAME: zone_name,
-                                    })
+                                    }
+                                    if ha_area:
+                                        zone_config[CONF_HA_AREA] = ha_area
+                                    imported_zones.append(zone_config)
                             except (ValueError, IndexError):
                                 pass
 
@@ -314,16 +326,21 @@ class KnoxOptionsFlowHandler(config_entries.OptionsFlow):
                             try:
                                 zone_id = int(row[0].strip())
                                 zone_name = row[1].strip()
+                                ha_area = row[2].strip() if len(row) >= 3 else ""
 
                                 if not (1 <= zone_id <= 64):
                                     continue
                                 if not zone_name:
                                     continue
 
-                                imported_zones.append({
+                                zone_config = {
                                     CONF_ZONE_ID: zone_id,
                                     CONF_ZONE_NAME: zone_name,
-                                })
+                                }
+                                if ha_area:
+                                    zone_config[CONF_HA_AREA] = ha_area
+
+                                imported_zones.append(zone_config)
                             except (ValueError, IndexError):
                                 continue
 
@@ -366,7 +383,7 @@ class KnoxOptionsFlowHandler(config_entries.OptionsFlow):
             }),
             errors=errors,
             description_placeholders={
-                "example_csv": "1,Living Room\n2,Kitchen\n3,Bedroom\n25,Study",
+                "example_csv": "1,Living Room,Living Room\n2,Kitchen,Kitchen\n3,Bedroom,Upstairs\n25,Study,Office",
                 "current_count": str(len(self._zones)),
             },
         )

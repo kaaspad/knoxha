@@ -17,6 +17,7 @@ CONF_SCAN_INTERVAL = "scan_interval"
 # Zone configuration
 CONF_ZONE_NAME = "name"
 CONF_ZONE_ID = "id"
+CONF_HA_AREA = "ha_area"  # Home Assistant area/zone assignment
 
 # Input configuration
 CONF_INPUT_NAME = "name"

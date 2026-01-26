@@ -22,6 +22,7 @@ from .const import (
     CONF_INPUTS,
     CONF_ZONE_NAME,
     CONF_ZONE_ID,
+    CONF_HA_AREA,
     CONF_INPUT_NAME,
     CONF_INPUT_ID,
 )
@@ -50,6 +51,7 @@ async def async_setup_entry(
                 client=client,
                 zone_id=zone[CONF_ZONE_ID],
                 zone_name=zone[CONF_ZONE_NAME],
+                ha_area=zone.get(CONF_HA_AREA),  # Optional HA area assignment
                 inputs=inputs,
                 entry_id=config_entry.entry_id,
             )
@@ -70,6 +72,7 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
         client: ChameleonClient,
         zone_id: int,
         zone_name: str,
+        ha_area: str | None,
         inputs: list[dict[str, Any]],
         entry_id: str,
     ) -> None:
@@ -79,6 +82,7 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
         self._client = client
         self._zone_id = zone_id
         self._zone_name = zone_name
+        self._ha_area = ha_area
         self._inputs = inputs
         self._entry_id = entry_id
 
@@ -102,12 +106,18 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
     @property
     def device_info(self) -> DeviceInfo:
         """Return device info."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, f"{self._entry_id}_{self._zone_id}")},
-            name=self._zone_name,
-            model="Chameleon64i Zone",
-            manufacturer="Knox Video",
-        )
+        device_info_dict = {
+            "identifiers": {(DOMAIN, f"{self._entry_id}_{self._zone_id}")},
+            "name": self._zone_name,
+            "model": "Chameleon64i Zone",
+            "manufacturer": "Knox Video",
+        }
+
+        # Add suggested area if specified
+        if self._ha_area:
+            device_info_dict["suggested_area"] = self._ha_area
+
+        return DeviceInfo(**device_info_dict)
 
     @property
     def available(self) -> bool:
