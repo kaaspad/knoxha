@@ -22,6 +22,7 @@ class ChameleonConnection:
         port: int = 8899,
         timeout: float = 5.0,
         max_retries: int = 3,
+        use_persistent_connection: bool = False,  # Default to socket-per-command
     ) -> None:
         """Initialize connection.
 
@@ -30,11 +31,13 @@ class ChameleonConnection:
             port: TCP port (default 8899 for serial-to-ethernet)
             timeout: Command timeout in seconds
             max_retries: Maximum retry attempts
+            use_persistent_connection: If False, creates new socket per command (HF2211A compatibility)
         """
         self.host = host
         self.port = port
         self.timeout = timeout
         self.max_retries = max_retries
+        self.use_persistent_connection = use_persistent_connection
 
         self._reader: Optional[asyncio.StreamReader] = None
         self._writer: Optional[asyncio.StreamWriter] = None
@@ -151,6 +154,50 @@ class ChameleonConnection:
             # No more data, buffer is clean
             pass
 
+    async def _send_command_fresh_socket(self, command: str) -> str:
+        """Send command using fresh socket (HF2211A compatibility mode).
+
+        Creates new connection, sends command, reads response, closes connection.
+        This matches the old working code's approach.
+        """
+        reader = None
+        writer = None
+
+        try:
+            # Connect
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(self.host, self.port),
+                timeout=self.timeout,
+            )
+
+            # Send command
+            command_bytes = f"{command}\r".encode("utf-8")
+            writer.write(command_bytes)
+            await writer.drain()
+
+            # Wait for response (HF2211A needs time)
+            await asyncio.sleep(0.1)
+
+            # Read response (blocking read like old code's recv)
+            response_bytes = await asyncio.wait_for(
+                reader.read(1024),
+                timeout=self.timeout,
+            )
+
+            response = response_bytes.decode("utf-8", errors="ignore").strip()
+            _LOGGER.debug("Fresh socket response (%d bytes): %s", len(response_bytes), response[:200])
+
+            return response
+
+        finally:
+            # Always close the socket
+            if writer:
+                try:
+                    writer.close()
+                    await writer.wait_closed()
+                except:
+                    pass
+
     async def send_command(self, command: str) -> str:
         """Send command and receive response.
 
@@ -165,6 +212,24 @@ class ChameleonConnection:
             ChameleonTimeoutError: Command timed out
         """
         async with self._lock:  # Serialize commands
+            # Use socket-per-command mode for HF2211A compatibility
+            if not self.use_persistent_connection:
+                _LOGGER.debug("Using fresh socket for command: %s", command)
+                for attempt in range(self.max_retries):
+                    try:
+                        return await self._send_command_fresh_socket(command)
+                    except asyncio.TimeoutError:
+                        if attempt < self.max_retries - 1:
+                            _LOGGER.warning("Timeout on attempt %d/%d (fresh socket)", attempt + 1, self.max_retries)
+                            continue
+                        raise ChameleonTimeoutError(f"Command timed out after {self.max_retries} attempts")
+                    except Exception as err:
+                        if attempt < self.max_retries - 1:
+                            _LOGGER.warning("Error on attempt %d/%d: %s", attempt + 1, self.max_retries, err)
+                            continue
+                        raise ChameleonConnectionError(f"Command failed: {err}") from err
+
+            # Original persistent connection code
             for attempt in range(self.max_retries):
                 try:
                     # Ensure connected

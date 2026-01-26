@@ -22,6 +22,7 @@ class ChameleonClient:
         port: int = 8899,
         timeout: float = 5.0,
         max_retries: int = 3,
+        use_persistent_connection: bool = False,  # Default to socket-per-command
     ) -> None:
         """Initialize client.
 
@@ -30,6 +31,7 @@ class ChameleonClient:
             port: TCP port (default 8899)
             timeout: Command timeout in seconds
             max_retries: Maximum retry attempts
+            use_persistent_connection: If False, uses socket-per-command (HF2211A compat)
         """
         self.host = host
         self.port = port
@@ -38,6 +40,7 @@ class ChameleonClient:
             port=port,
             timeout=timeout,
             max_retries=max_retries,
+            use_persistent_connection=use_persistent_connection,
         )
         self._commands = ChameleonCommands()
 
