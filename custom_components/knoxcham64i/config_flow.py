@@ -188,7 +188,7 @@ class KnoxOptionsFlowHandler(config_entries.OptionsFlow):
         errors = {}
 
         if user_input is not None:
-            zone_id = user_input[CONF_ZONE_ID]
+            zone_id = int(user_input[CONF_ZONE_ID])  # Convert to int!
             zone_name = user_input[CONF_ZONE_NAME].strip()
             ha_area = user_input.get(CONF_HA_AREA, "").strip()
 
@@ -209,7 +209,7 @@ class KnoxOptionsFlowHandler(config_entries.OptionsFlow):
                 self._zones.append(zone_config)
                 self._zones.sort(key=lambda x: x[CONF_ZONE_ID])
                 await self._save_config()
-                return await self.async_step_manage_zones()
+                return await self.async_step_init()  # Return to main menu
 
         # Get available zone IDs
         used_ids = {zone[CONF_ZONE_ID] for zone in self._zones}
@@ -245,7 +245,7 @@ class KnoxOptionsFlowHandler(config_entries.OptionsFlow):
             zone_id = int(user_input["zone_to_remove"])
             self._zones = [z for z in self._zones if z[CONF_ZONE_ID] != zone_id]
             await self._save_config()
-            return await self.async_step_manage_zones()
+            return await self.async_step_init()  # Return to main menu
 
         return self.async_show_form(
             step_id="remove_zone",
@@ -262,7 +262,7 @@ class KnoxOptionsFlowHandler(config_entries.OptionsFlow):
     ) -> FlowResult:
         """List all configured zones."""
         if user_input is not None:
-            return await self.async_step_manage_zones()
+            return await self.async_step_init()  # Return to main menu
 
         zones_list = "\n".join(
             f"• Zone {z[CONF_ZONE_ID]}: {z[CONF_ZONE_NAME]}"
@@ -425,7 +425,7 @@ class KnoxOptionsFlowHandler(config_entries.OptionsFlow):
                 })
                 self._inputs.sort(key=lambda x: x[CONF_INPUT_ID])
                 await self._save_config()
-                return await self.async_step_manage_inputs()
+                return await self.async_step_init()  # Return to main menu
 
         # Get available input IDs
         used_ids = {inp[CONF_INPUT_ID] for inp in self._inputs}
@@ -460,7 +460,7 @@ class KnoxOptionsFlowHandler(config_entries.OptionsFlow):
             input_id = int(user_input["input_to_remove"])
             self._inputs = [i for i in self._inputs if i[CONF_INPUT_ID] != input_id]
             await self._save_config()
-            return await self.async_step_manage_inputs()
+            return await self.async_step_init()  # Return to main menu
 
         return self.async_show_form(
             step_id="remove_input",
@@ -477,7 +477,7 @@ class KnoxOptionsFlowHandler(config_entries.OptionsFlow):
     ) -> FlowResult:
         """List all configured inputs."""
         if user_input is not None:
-            return await self.async_step_manage_inputs()
+            return await self.async_step_init()  # Return to main menu
 
         inputs_list = "\n".join(
             f"• Input {i[CONF_INPUT_ID]}: {i[CONF_INPUT_NAME]}"
