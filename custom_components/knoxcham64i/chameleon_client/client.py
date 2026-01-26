@@ -488,12 +488,14 @@ class ChameleonClient:
             True if connection is working
         """
         try:
-            # Test with a simple query command (D01 = get crosspoint for zone 1)
-            # This matches the old working code's test method
-            command = self._commands.get_crosspoint(1)
-            response = await self._send_command(command)
-            result = self._parse_response(response)
-            return result.get("success", False)
+            # Just verify connection is established
+            # The connection itself is the test - if connect() succeeded, we're good
+            # Some Knox devices reject certain commands (D01 returns ERROR on some models)
+            # So don't test with a command, just verify we can connect
+            if not self._connection.is_connected:
+                await self._connection.connect()
+
+            return self._connection.is_connected
         except Exception as err:
             _LOGGER.debug("Connection test failed: %s", err)
             return False
