@@ -375,29 +375,41 @@ class ChameleonClient:
         # Parse VTB data
         if vtb_result.get("success") and "data" in vtb_result:
             vtb_data = vtb_result["data"]
+            _LOGGER.debug("Parsing VTB data for zone %d: %s", zone, repr(vtb_data))
 
-            # Volume
-            volume_match = re.search(r'V:(-?\d+)', vtb_data)
+            # Volume - handle format like "V:+4" or "V:-5" or "V:32"
+            # Note: Knox may return negative values for some configurations
+            volume_match = re.search(r'V:([+-]?\d+)', vtb_data)
             if volume_match:
                 volume = int(volume_match.group(1))
+                _LOGGER.debug("Found volume: %d", volume)
                 if 0 <= volume <= 63:
                     state.volume = volume
                 else:
-                    # CRITICAL: Knox reports V:-1 for unconfigured zones
+                    # CRITICAL: Knox reports V:-1 or other invalid values
                     # Use zone number as fallback to ensure audible audio
                     # This matches old working code behavior
                     fallback_volume = min(zone, 40)
                     _LOGGER.debug("Zone %d has invalid volume %d, using fallback: %d",
                                   zone, volume, fallback_volume)
                     state.volume = fallback_volume
+            else:
+                # No volume found in response, use fallback
+                fallback_volume = min(zone, 40)
+                _LOGGER.debug("Zone %d has no volume in response, using fallback: %d",
+                              zone, fallback_volume)
+                state.volume = fallback_volume
 
             # Mute
             mute_match = re.search(r'M:(\d+)', vtb_data)
             if mute_match:
-                state.is_muted = int(mute_match.group(1)) == 1
+                mute_val = int(mute_match.group(1))
+                state.is_muted = (mute_val == 1)
+                _LOGGER.debug("Found mute: %d -> is_muted=%s", mute_val, state.is_muted)
             else:
                 # Default to unmuted if mute state not reported
                 state.is_muted = False
+                _LOGGER.debug("No mute state found, defaulting to unmuted")
 
         # Parse crosspoint data
         if cp_result.get("success") and "data" in cp_result:

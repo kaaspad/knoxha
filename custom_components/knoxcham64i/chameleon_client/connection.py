@@ -154,19 +154,58 @@ class ChameleonConnection:
                     self._writer.write(command_bytes)
                     await self._writer.drain()
 
-                    # Small delay for device to process (per old working code)
-                    await asyncio.sleep(0.1)
-
                     # Receive response with timeout
                     # Knox sends multi-line responses ending with DONE/ERROR
-                    # Use read() with limit like old code's recv(1024)
-                    response_bytes = await asyncio.wait_for(
-                        self._reader.read(1024),
-                        timeout=self.timeout,
-                    )
+                    # Read until we get complete response (like old code's blocking recv)
+                    response_data = bytearray()
+                    start_time = asyncio.get_event_loop().time()
+
+                    while True:
+                        # Check timeout
+                        elapsed = asyncio.get_event_loop().time() - start_time
+                        if elapsed > self.timeout:
+                            raise asyncio.TimeoutError()
+
+                        # Read available data (non-blocking with short timeout)
+                        try:
+                            chunk = await asyncio.wait_for(
+                                self._reader.read(1024),
+                                timeout=0.5,  # Read chunks with 0.5s timeout
+                            )
+                            if chunk:
+                                response_data.extend(chunk)
+
+                                # Check if response is complete
+                                response_str = response_data.decode("utf-8", errors="ignore")
+
+                                # Knox responses end with DONE, ERROR, or just the data
+                                # For VTB commands ($D), response format is "V:XX  M:X  L:X..."
+                                # For crosspoint (D), can have DONE or just end
+                                if "DONE" in response_str or "ERROR" in response_str:
+                                    # Got explicit terminator
+                                    break
+                                elif "\r\n" in response_str and len(response_data) > 20:
+                                    # Got some data with line ending, wait a bit more
+                                    # to see if DONE is coming
+                                    try:
+                                        extra = await asyncio.wait_for(
+                                            self._reader.read(100),
+                                            timeout=0.2,
+                                        )
+                                        if extra:
+                                            response_data.extend(extra)
+                                    except asyncio.TimeoutError:
+                                        # No more data, response is complete
+                                        pass
+                                    break
+                        except asyncio.TimeoutError:
+                            # No data available, but might have partial response
+                            if len(response_data) > 0:
+                                break
+                            # No data at all yet, keep waiting
 
                     # Decode with error handling for serial adapter noise (0xFF bytes)
-                    response = response_bytes.decode("utf-8", errors="ignore").strip()
+                    response = response_data.decode("utf-8", errors="ignore").strip()
                     _LOGGER.debug("Received response: %s", response)
 
                     return response
