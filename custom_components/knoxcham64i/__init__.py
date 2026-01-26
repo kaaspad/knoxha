@@ -107,5 +107,24 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload config entry."""
-    await hass.config_entries.async_reload(entry.entry_id)
+    """Reload config entry when zones change, or just update entities when inputs change."""
+    # Get previous data to compare what changed
+    data = hass.data[DOMAIN].get(entry.entry_id)
+    if not data:
+        # First load or something went wrong, do full reload
+        await hass.config_entries.async_reload(entry.entry_id)
+        return
+
+    coordinator = data["coordinator"]
+    old_zones = set(zone["id"] for zone in coordinator.config_entry.data.get(CONF_ZONES, []))
+    new_zones = set(zone["id"] for zone in entry.data.get(CONF_ZONES, []))
+
+    # Check if zones changed (added or removed)
+    if old_zones != new_zones:
+        _LOGGER.info("Zones changed, performing full reload")
+        await hass.config_entries.async_reload(entry.entry_id)
+    else:
+        # Only inputs changed - entities read inputs dynamically from config_entry
+        # Just notify entities to update their state (no polling needed)
+        _LOGGER.info("Only inputs changed, notifying entities without polling")
+        coordinator.async_set_updated_data(coordinator.data)

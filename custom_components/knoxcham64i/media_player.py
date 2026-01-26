@@ -41,7 +41,6 @@ async def async_setup_entry(
     coordinator = data["coordinator"]
 
     zones = config_entry.data.get(CONF_ZONES, [])
-    inputs = config_entry.data.get(CONF_INPUTS, [])
 
     entities = []
     for zone in zones:
@@ -52,7 +51,7 @@ async def async_setup_entry(
                 zone_id=zone[CONF_ZONE_ID],
                 zone_name=zone[CONF_ZONE_NAME],
                 ha_area=zone.get(CONF_HA_AREA),  # Optional HA area assignment
-                inputs=inputs,
+                config_entry=config_entry,  # Pass config entry for dynamic input list
                 entry_id=config_entry.entry_id,
             )
         )
@@ -73,7 +72,7 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
         zone_id: int,
         zone_name: str,
         ha_area: str | None,
-        inputs: list[dict[str, Any]],
+        config_entry: ConfigEntry,
         entry_id: str,
     ) -> None:
         """Initialize the zone."""
@@ -83,16 +82,13 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
         self._zone_id = zone_id
         self._zone_name = zone_name
         self._ha_area = ha_area
-        self._inputs = inputs
+        self._config_entry = config_entry  # Store config entry to read inputs dynamically
         self._entry_id = entry_id
 
         # Set unique ID
         self._attr_unique_id = f"{entry_id}_{zone_id}"
         # With has_entity_name=True, set name to None to use device name only
         self._attr_name = None
-
-        # Build source list
-        self._attr_source_list = [inp[CONF_INPUT_NAME] for inp in inputs]
 
         # Set supported features
         self._attr_supported_features = (
@@ -102,6 +98,16 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
             | MediaPlayerEntityFeature.VOLUME_MUTE
             | MediaPlayerEntityFeature.SELECT_SOURCE
         )
+
+    @property
+    def _inputs(self) -> list[dict[str, Any]]:
+        """Get current input list from config entry (updates dynamically)."""
+        return self._config_entry.data.get(CONF_INPUTS, [])
+
+    @property
+    def source_list(self) -> list[str] | None:
+        """Return the list of available input sources (updates dynamically)."""
+        return [inp[CONF_INPUT_NAME] for inp in self._inputs]
 
     @property
     def device_info(self) -> DeviceInfo:
