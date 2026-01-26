@@ -25,7 +25,6 @@ from .const import (
     CONF_INPUT_ID,
     DEFAULT_ZONE_NAMES,
     DEFAULT_INPUT_NAMES,
-    DEFAULT_INPUT,
 )
 from .chameleon_client import ChameleonClient, ChameleonError
 
@@ -79,7 +78,7 @@ class KnoxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_HOST: user_input[CONF_HOST],
                         CONF_PORT: user_input[CONF_PORT],
                         CONF_ZONES: [],  # Start with no zones - configure via options
-                        CONF_INPUTS: [DEFAULT_INPUT],  # At least one default input
+                        CONF_INPUTS: [],  # Start with no inputs - user configures them
                     },
                 )
 
@@ -339,10 +338,8 @@ class KnoxOptionsFlowHandler(config_entries.OptionsFlow):
             
             # Remove deleted inputs
             new_inputs = [input for input in new_inputs if input[CONF_INPUT_ID] not in inputs_to_delete]
-            
-            # Ensure at least default input if all deleted
-            if not new_inputs:
-                new_inputs = [DEFAULT_INPUT]
+
+            # Allow empty input list - user can configure later
             
             if not errors:
                 # Sort inputs by ID
