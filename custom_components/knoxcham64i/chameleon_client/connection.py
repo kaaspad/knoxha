@@ -175,17 +175,50 @@ class ChameleonConnection:
             writer.write(command_bytes)
             await writer.drain()
 
-            # Wait for response (HF2211A needs time)
-            await asyncio.sleep(0.1)
+            # Read response with proper blocking behavior
+            # Old code's recv() blocked waiting for data - we need to simulate that
+            response_data = bytearray()
+            deadline = asyncio.get_event_loop().time() + self.timeout
 
-            # Read response (blocking read like old code's recv)
-            response_bytes = await asyncio.wait_for(
-                reader.read(1024),
-                timeout=self.timeout,
-            )
+            while asyncio.get_event_loop().time() < deadline:
+                try:
+                    # Read with 2 second timeout (like old code's socket timeout)
+                    chunk = await asyncio.wait_for(reader.read(1024), timeout=2.0)
 
-            response = response_bytes.decode("utf-8", errors="ignore").strip()
-            _LOGGER.debug("Fresh socket response (%d bytes): %s", len(response_bytes), response[:200])
+                    if chunk:
+                        response_data.extend(chunk)
+
+                        # Check if we have a complete response
+                        response_str = response_data.decode("utf-8", errors="ignore")
+
+                        # If we have DONE or ERROR, we're done
+                        if "DONE" in response_str or "ERROR" in response_str:
+                            break
+
+                        # If we have substantial data (not just echo), wait a bit for more
+                        if len(response_data) > len(command) + 5:  # More than just echo
+                            try:
+                                extra = await asyncio.wait_for(reader.read(512), timeout=0.2)
+                                if extra:
+                                    response_data.extend(extra)
+                            except asyncio.TimeoutError:
+                                pass
+                            break
+                    else:
+                        # Empty read = connection closed
+                        break
+
+                except asyncio.TimeoutError:
+                    # Timeout waiting for chunk - if we have data, that's our response
+                    if len(response_data) > 0:
+                        break
+                    # Otherwise keep waiting
+
+            if len(response_data) == 0:
+                raise ChameleonTimeoutError("No response received")
+
+            response = response_data.decode("utf-8", errors="ignore").strip()
+            _LOGGER.debug("Fresh socket response (%d bytes): %s", len(response_data), response[:200])
 
             return response
 
