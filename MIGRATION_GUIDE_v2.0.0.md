@@ -117,7 +117,7 @@ Persistent connections are 3-5x faster and more reliable.
 2. **Install via HACS**
    - Open HACS in Home Assistant
    - Click the 3 dots → "Custom repositories"
-   - Add repository URL: `https://github.com/YOUR_USERNAME/knox-chameleon64i`
+   - Add repository URL: `https://github.com/kaaspad/knoxha`
    - Category: "Integration"
    - Search for "Knox Chameleon64i" and install
    - Restart Home Assistant
@@ -145,7 +145,7 @@ Persistent connections are 3-5x faster and more reliable.
 3. **Install New Files**
    ```bash
    # Clone or download the repository
-   git clone https://github.com/YOUR_USERNAME/knox-chameleon64i.git
+   git clone https://github.com/kaaspad/knoxha.git
 
    # Copy integration to custom_components
    cp -r knox-chameleon64i/custom_components/knoxcham64i /config/custom_components/
@@ -355,7 +355,7 @@ If you encounter critical issues and need to rollback to v0.2.0:
 
 2. **Restore v0.2.0**
    ```bash
-   git clone -b v0.2.0 https://github.com/YOUR_USERNAME/knox-chameleon64i.git
+   git clone -b v0.2.0 https://github.com/kaaspad/knoxha.git
    cp -r knox-chameleon64i/*.py /config/custom_components/knoxcham64i/
    cp knox-chameleon64i/manifest.json /config/custom_components/knoxcham64i/
    cp knox-chameleon64i/services.yaml /config/custom_components/knoxcham64i/
@@ -367,7 +367,7 @@ If you encounter critical issues and need to rollback to v0.2.0:
    ```
 
 4. **Report Issue**
-   Please report what went wrong at: https://github.com/YOUR_USERNAME/knox-chameleon64i/issues
+   Please report what went wrong at: https://github.com/kaaspad/knoxha/issues
 
 ## Performance Comparison
 
@@ -424,7 +424,7 @@ If you encounter critical issues and need to rollback to v0.2.0:
 
 ### Q: What if I find a bug?
 
-**A:** Please report it at https://github.com/YOUR_USERNAME/knox-chameleon64i/issues with:
+**A:** Please report it at https://github.com/kaaspad/knoxha/issues with:
 - Home Assistant version
 - Integration version
 - Relevant logs (with debug logging enabled)
@@ -442,8 +442,8 @@ If you encounter critical issues and need to rollback to v0.2.0:
 
 - **Documentation:** See `README.md` for general usage
 - **Verification Report:** See `PRE_FLIGHT_VERIFICATION_REPORT.md` for technical details
-- **GitHub Issues:** https://github.com/YOUR_USERNAME/knox-chameleon64i/issues
-- **GitHub Discussions:** https://github.com/YOUR_USERNAME/knox-chameleon64i/discussions
+- **GitHub Issues:** https://github.com/kaaspad/knoxha/issues
+- **GitHub Discussions:** https://github.com/kaaspad/knoxha/discussions
 
 ## Summary
 

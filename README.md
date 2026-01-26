@@ -22,7 +22,7 @@ Production-grade Home Assistant custom integration for controlling Knox Chameleo
 1. Open HACS in Home Assistant
 2. Click the 3 dots in the top right corner
 3. Select "Custom repositories"
-4. Add repository URL: `https://github.com/YOUR_USERNAME/knox-chameleon64i`
+4. Add repository URL: `https://github.com/kaaspad/knoxha`
 5. Select category: "Integration"
 6. Click "Add"
 7. Search for "Knox Chameleon64i" and install
@@ -108,8 +108,8 @@ This integration is fully compatible with Music Assistant:
 
 ## Support
 
-- Report issues: [GitHub Issues](https://github.com/YOUR_USERNAME/knox-chameleon64i/issues)
-- Discussions: [GitHub Discussions](https://github.com/YOUR_USERNAME/knox-chameleon64i/discussions)
+- Report issues: [GitHub Issues](https://github.com/kaaspad/knoxha/issues)
+- Discussions: [GitHub Discussions](https://github.com/kaaspad/knoxha/discussions)
 
 ## License
 
