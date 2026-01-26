@@ -66,16 +66,24 @@ class ChameleonConnection:
             self._reconnect_delay = 1.0  # Reset backoff on successful connect
             _LOGGER.info("Connected to Knox device at %s:%d", self.host, self.port)
 
-            # Small delay and clear any initialization bytes from serial adapter
-            await asyncio.sleep(0.2)
+            # CRITICAL: Aggressively clear buffer on connect
+            # HF2211A sends initialization bytes and may have buffered data
+            await asyncio.sleep(0.3)
+            total_flushed = 0
             try:
-                # Non-blocking read to clear any startup noise (e.g., 0xFF from HF2211A)
-                leftover = await asyncio.wait_for(self._reader.read(1024), timeout=0.1)
-                if leftover:
-                    _LOGGER.debug("Cleared %d initialization bytes from adapter", len(leftover))
+                # Keep reading until buffer is empty
+                while True:
+                    leftover = await asyncio.wait_for(self._reader.read(4096), timeout=0.1)
+                    if not leftover:
+                        break
+                    total_flushed += len(leftover)
             except asyncio.TimeoutError:
-                # No initialization bytes, this is fine
                 pass
+
+            if total_flushed > 0:
+                _LOGGER.info("Flushed %d initialization bytes from adapter on connect", total_flushed)
+            else:
+                _LOGGER.debug("Buffer was clean on connect")
 
         except asyncio.TimeoutError as err:
             _LOGGER.error(
@@ -127,6 +135,22 @@ class ChameleonConnection:
 
         await self.connect()
 
+    async def _flush_buffer(self) -> None:
+        """Flush any leftover data in the read buffer."""
+        try:
+            # Try to read any leftover data with very short timeout
+            while True:
+                leftover = await asyncio.wait_for(
+                    self._reader.read(4096),
+                    timeout=0.05,  # 50ms timeout
+                )
+                if not leftover:
+                    break
+                _LOGGER.debug("Flushed %d bytes from buffer", len(leftover))
+        except asyncio.TimeoutError:
+            # No more data, buffer is clean
+            pass
+
     async def send_command(self, command: str) -> str:
         """Send command and receive response.
 
@@ -148,65 +172,72 @@ class ChameleonConnection:
                         _LOGGER.warning("Not connected, attempting to connect...")
                         await self.connect()
 
+                    # CRITICAL: Flush buffer before sending command
+                    # HF2211A adapter buffers data poorly, causing response bleed
+                    await self._flush_buffer()
+
                     # Send command
                     command_bytes = f"{command}\r".encode("utf-8")
                     _LOGGER.debug("Sending command: %s", command)
                     self._writer.write(command_bytes)
                     await self._writer.drain()
 
-                    # Receive response with timeout
-                    # Knox sends multi-line responses ending with DONE/ERROR
-                    # Read until we get complete response (like old code's blocking recv)
+                    # Wait for device to process (HF2211A needs time)
+                    await asyncio.sleep(0.15)
+
+                    # Receive response - read everything available
+                    # Use longer timeout and accumulate all data
                     response_data = bytearray()
-                    start_time = asyncio.get_event_loop().time()
+                    deadline = asyncio.get_event_loop().time() + self.timeout
 
-                    while True:
-                        # Check timeout
-                        elapsed = asyncio.get_event_loop().time() - start_time
-                        if elapsed > self.timeout:
-                            raise asyncio.TimeoutError()
-
-                        # Read available data (non-blocking with short timeout)
+                    while asyncio.get_event_loop().time() < deadline:
                         try:
+                            # Read with 1 second timeout per chunk
                             chunk = await asyncio.wait_for(
-                                self._reader.read(1024),
-                                timeout=0.5,  # Read chunks with 0.5s timeout
+                                self._reader.read(4096),
+                                timeout=1.0,
                             )
                             if chunk:
                                 response_data.extend(chunk)
+                                _LOGGER.debug("Read %d bytes", len(chunk))
 
-                                # Check if response is complete
+                                # Check if we have terminator
                                 response_str = response_data.decode("utf-8", errors="ignore")
-
-                                # Knox responses end with DONE, ERROR, or just the data
-                                # For VTB commands ($D), response format is "V:XX  M:X  L:X..."
-                                # For crosspoint (D), can have DONE or just end
                                 if "DONE" in response_str or "ERROR" in response_str:
-                                    # Got explicit terminator
+                                    _LOGGER.debug("Got terminator, response complete")
                                     break
-                                elif "\r\n" in response_str and len(response_data) > 20:
-                                    # Got some data with line ending, wait a bit more
-                                    # to see if DONE is coming
+
+                                # If no terminator but we have substantial data, wait briefly for more
+                                if len(response_data) > 20:
                                     try:
                                         extra = await asyncio.wait_for(
-                                            self._reader.read(100),
-                                            timeout=0.2,
+                                            self._reader.read(1024),
+                                            timeout=0.3,
                                         )
                                         if extra:
                                             response_data.extend(extra)
+                                            _LOGGER.debug("Read %d extra bytes", len(extra))
                                     except asyncio.TimeoutError:
-                                        # No more data, response is complete
-                                        pass
+                                        # No more data coming
+                                        _LOGGER.debug("No more data, response complete")
+                                        break
+                            else:
+                                # Empty read means EOF or no data
+                                if len(response_data) > 0:
                                     break
                         except asyncio.TimeoutError:
-                            # No data available, but might have partial response
+                            # Timeout on chunk read
                             if len(response_data) > 0:
+                                _LOGGER.debug("Read timeout with %d bytes, completing", len(response_data))
                                 break
-                            # No data at all yet, keep waiting
+                            # No data yet, continue waiting
+
+                    if len(response_data) == 0:
+                        raise asyncio.TimeoutError("No response received")
 
                     # Decode with error handling for serial adapter noise (0xFF bytes)
                     response = response_data.decode("utf-8", errors="ignore").strip()
-                    _LOGGER.debug("Received response: %s", response)
+                    _LOGGER.debug("Received response (%d bytes): %s", len(response_data), response[:200])
 
                     return response
 
