@@ -84,7 +84,8 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
 
         # Set unique ID
         self._attr_unique_id = f"{entry_id}_{zone_id}"
-        self._attr_name = zone_name
+        # With has_entity_name=True, set name to None to use device name only
+        self._attr_name = None
 
         # Build source list
         self._attr_source_list = [inp[CONF_INPUT_NAME] for inp in inputs]
@@ -118,15 +119,14 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
         """Return the state of the zone."""
         zone_state = self.coordinator.data.get(self._zone_id)
         if not zone_state:
-            return None
+            return MediaPlayerState.ON  # Default to ON if no data yet
 
-        # Zone is ON if not muted
+        # Zone is OFF if explicitly muted, otherwise ON
         if zone_state.is_muted is True:
             return MediaPlayerState.OFF
-        elif zone_state.is_muted is False:
+        else:
+            # Default to ON if mute state is unknown (is_muted is None or False)
             return MediaPlayerState.ON
-
-        return None
 
     @property
     def volume_level(self) -> float | None:

@@ -54,8 +54,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 return {}
 
             # Fetch state for all zones
-            _LOGGER.debug("Updating state for %d zones", len(zone_ids))
+            _LOGGER.debug("Updating state for zones: %s", zone_ids)
             states = await client.get_all_zones_state(zone_ids)
+            _LOGGER.debug("Got states: %s", {k: f"input={v.input_id}, vol={v.volume}, mute={v.is_muted}" for k, v in states.items()})
 
             return states
 

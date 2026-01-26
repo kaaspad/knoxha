@@ -382,11 +382,22 @@ class ChameleonClient:
                 volume = int(volume_match.group(1))
                 if 0 <= volume <= 63:
                     state.volume = volume
+                else:
+                    # CRITICAL: Knox reports V:-1 for unconfigured zones
+                    # Use zone number as fallback to ensure audible audio
+                    # This matches old working code behavior
+                    fallback_volume = min(zone, 40)
+                    _LOGGER.debug("Zone %d has invalid volume %d, using fallback: %d",
+                                  zone, volume, fallback_volume)
+                    state.volume = fallback_volume
 
             # Mute
             mute_match = re.search(r'M:(\d+)', vtb_data)
             if mute_match:
                 state.is_muted = int(mute_match.group(1)) == 1
+            else:
+                # Default to unmuted if mute state not reported
+                state.is_muted = False
 
         # Parse crosspoint data
         if cp_result.get("success") and "data" in cp_result:
