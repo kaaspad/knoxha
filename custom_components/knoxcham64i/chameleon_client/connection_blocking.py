@@ -107,6 +107,9 @@ class ChameleonConnectionBlocking:
                 start_time = time.time()
                 last_data_time = start_time
 
+                # Detect command type for smart timeout
+                is_vtb_query = command.startswith("$D")  # Single-zone VTB query
+
                 # Use shorter individual recv timeouts but keep looping until main timeout
                 sock.settimeout(0.2)  # Reduced from 0.3s for faster responses
 
@@ -118,8 +121,10 @@ class ChameleonConnectionBlocking:
                             last_data_time = time.time()
                             _LOGGER.debug("Received %d bytes (total: %d)", len(chunk), len(response_data))
 
-                            # Check if we have complete response (ends with DONE or ERROR)
+                            # Check if we have complete response
                             response_str = response_data.decode("utf-8", errors="ignore")
+
+                            # Standard terminator check
                             if "DONE" in response_str or "ERROR" in response_str:
                                 _LOGGER.debug("Got complete response with terminator")
                                 # Wait briefly to catch any trailing data
@@ -132,6 +137,16 @@ class ChameleonConnectionBlocking:
                                 except socket.timeout:
                                     pass
                                 break
+
+                            # PERFORMANCE FIX: VTB queries ($Dxx) return single line without DONE
+                            # Response format: "V:32  M:0  L:0  BL:00 BR:00 B: 0 T: 0\r\n"
+                            # If we've received data ending with \r\n and it's been >0.5s with no more data,
+                            # consider it complete
+                            if is_vtb_query and response_str.endswith("\n") and len(response_str) > 20:
+                                time_since_data = time.time() - last_data_time
+                                if time_since_data > 0.5:
+                                    _LOGGER.debug("VTB query complete (got newline, no more data)")
+                                    break
                         else:
                             # Empty recv = connection closed
                             if len(response_data) > 0:
@@ -140,13 +155,22 @@ class ChameleonConnectionBlocking:
                     except socket.timeout:
                         # Timeout on individual recv() - this is expected for slow adapter
                         # CRITICAL: HF2211A sends data in bursts with gaps >2s between bursts!
-                        # We MUST wait the full main timeout and ONLY exit on DONE/ERROR
                         if len(response_data) > 0:
-                            # Check for terminator
                             response_str = response_data.decode("utf-8", errors="ignore")
+
+                            # Check for standard terminator
                             if "DONE" in response_str or "ERROR" in response_str:
                                 _LOGGER.debug("Found terminator, response complete")
                                 break
+
+                            # PERFORMANCE FIX: For VTB queries, check if response looks complete
+                            # If we got a line ending with \r\n and haven't received data in 1s, done
+                            if is_vtb_query and response_str.endswith("\n") and len(response_str) > 20:
+                                time_since_data = time.time() - last_data_time
+                                if time_since_data >= 1.0:
+                                    _LOGGER.debug("VTB query timeout after complete line (%.1fs idle)", time_since_data)
+                                    break
+
                             # Otherwise keep waiting for main timeout
                             time_since_data = time.time() - last_data_time
                             _LOGGER.debug("Waiting... %d bytes so far, %.1fs since last data", len(response_data), time_since_data)

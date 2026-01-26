@@ -380,7 +380,7 @@ class KnoxOptionsFlowHandler(config_entries.OptionsFlow):
                             "total": len(imported_zones),
                         }
 
-                        return self.async_show_progress_done(next_step_id="import_success")
+                        return await self.async_step_import_success()
 
                 except Exception as err:
                     _LOGGER.exception("CSV parsing error: %s", err)
