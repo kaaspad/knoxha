@@ -476,9 +476,12 @@ class ChameleonClient:
             True if connection is working
         """
         try:
-            # Try to get firmware version
-            version = await self.get_firmware_version()
-            return version is not None
+            # Test with a simple query command (D01 = get crosspoint for zone 1)
+            # This matches the old working code's test method
+            command = self._commands.get_crosspoint(1)
+            response = await self._send_command(command)
+            result = self._parse_response(response)
+            return result.get("success", False)
         except Exception as err:
             _LOGGER.debug("Connection test failed: %s", err)
             return False
