@@ -59,16 +59,30 @@ class ChameleonCommands:
         return f"A{zone:02d}{input_id:02d}"
 
     @staticmethod
-    def get_crosspoint(zone: int) -> str:
-        """Get current crosspoint (input routing) for a zone.
+    def get_crosspoint(zone: int = 1) -> str:
+        """Get current crosspoint (input routing) for zones.
 
-        Command: Dxx
+        Note: Knox Chameleon64i doesn't support querying single zones (Dxx).
+        It requires range queries (Dxxyy). Based on testing, D0136 works reliably
+        to query zones 1-36.
+
+        Command: D0136 (query zones 1-36)
         - D = Display/Dump crosspoint
-        - xx = zone number (01-64)
+        - 01 = start zone
+        - 36 = end zone
 
-        Response format varies - see manual page 20
+        The client will parse the response to extract the specific zone requested.
+
+        Response format: Multiple OUTPUT lines with VIDEO/AUDIO assignments
+        Example:
+          OUTPUT    1   VIDEO   2   AUDIO   2
+          OUTPUT    2   VIDEO   2   AUDIO   2
+          ...
+          DONE
         """
-        return f"D{zone:02d}"
+        # Always query zones 1-36 (the configured range that works)
+        # Parser will extract the specific zone from the response
+        return "D0136"
 
     # ========================================================================
     # VOLUME, TONE, BALANCE (VTB) COMMANDS (Section 3.4, page 17)
