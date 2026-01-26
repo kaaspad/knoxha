@@ -66,6 +66,17 @@ class ChameleonConnection:
             self._reconnect_delay = 1.0  # Reset backoff on successful connect
             _LOGGER.info("Connected to Knox device at %s:%d", self.host, self.port)
 
+            # Small delay and clear any initialization bytes from serial adapter
+            await asyncio.sleep(0.2)
+            try:
+                # Non-blocking read to clear any startup noise (e.g., 0xFF from HF2211A)
+                leftover = await asyncio.wait_for(self._reader.read(1024), timeout=0.1)
+                if leftover:
+                    _LOGGER.debug("Cleared %d initialization bytes from adapter", len(leftover))
+            except asyncio.TimeoutError:
+                # No initialization bytes, this is fine
+                pass
+
         except asyncio.TimeoutError as err:
             _LOGGER.error(
                 "Timeout connecting to Knox device at %s:%d", self.host, self.port
@@ -143,12 +154,19 @@ class ChameleonConnection:
                     self._writer.write(command_bytes)
                     await self._writer.drain()
 
+                    # Small delay for device to process (per old working code)
+                    await asyncio.sleep(0.1)
+
                     # Receive response with timeout
+                    # Knox sends multi-line responses ending with DONE/ERROR
+                    # Use read() with limit like old code's recv(1024)
                     response_bytes = await asyncio.wait_for(
-                        self._reader.readuntil(b"\r\n"),
+                        self._reader.read(1024),
                         timeout=self.timeout,
                     )
-                    response = response_bytes.decode("utf-8").strip()
+
+                    # Decode with error handling for serial adapter noise (0xFF bytes)
+                    response = response_bytes.decode("utf-8", errors="ignore").strip()
                     _LOGGER.debug("Received response: %s", response)
 
                     return response
@@ -182,6 +200,15 @@ class ChameleonConnection:
                     else:
                         raise ChameleonConnectionError(
                             f"Connection failed after {self.max_retries} attempts: {err}"
+                        ) from err
+
+                except UnicodeDecodeError as err:
+                    _LOGGER.error("UTF-8 decode error (serial noise?): %s", err)
+                    if attempt < self.max_retries - 1:
+                        await self._reconnect_with_backoff()
+                    else:
+                        raise ChameleonConnectionError(
+                            f"Decode error after {self.max_retries} attempts: {err}"
                         ) from err
 
                 except Exception as err:
