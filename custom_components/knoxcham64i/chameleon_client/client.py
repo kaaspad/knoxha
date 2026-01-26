@@ -20,7 +20,7 @@ class ChameleonClient:
         self,
         host: str,
         port: int = 8899,
-        timeout: float = 5.0,  # HF2211A adapter is very slow, needs longer timeout
+        timeout: float = 3.0,  # Optimized for balance between reliability and speed
         max_retries: int = 3,
     ) -> None:
         """Initialize client.
@@ -28,7 +28,7 @@ class ChameleonClient:
         Args:
             host: Device IP address or hostname
             port: TCP port (default 8899)
-            timeout: Socket timeout in seconds (default 5.0 for HF2211A compatibility)
+            timeout: Socket timeout in seconds (default 3.0 - balanced for HF2211A)
             max_retries: Maximum retry attempts
         """
         self.host = host

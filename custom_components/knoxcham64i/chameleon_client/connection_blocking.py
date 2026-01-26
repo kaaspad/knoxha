@@ -21,7 +21,7 @@ class ChameleonConnectionBlocking:
         self,
         host: str,
         port: int = 8899,
-        timeout: float = 5.0,  # Increased from 2.0 - HF2211A is VERY slow for large responses
+        timeout: float = 3.0,  # Optimized for balance between reliability and speed
         max_retries: int = 3,
     ) -> None:
         """Initialize connection.
@@ -29,7 +29,7 @@ class ChameleonConnectionBlocking:
         Args:
             host: Device IP address
             port: TCP port (default 8899)
-            timeout: Socket timeout in seconds (default 5.0 for HF2211A compatibility)
+            timeout: Socket timeout in seconds (default 3.0 - balanced for HF2211A)
             max_retries: Maximum retry attempts
         """
         self.host = host
@@ -82,9 +82,8 @@ class ChameleonConnectionBlocking:
                 _LOGGER.debug("Connecting for command: %s", command)
                 sock.connect((self.host, self.port))
 
-                # HF2211A sends initialization bytes on connect - wait longer and flush
-                # CRITICAL: Adapter is VERY slow, need generous wait time
-                time.sleep(0.5)
+                # HF2211A sends initialization bytes on connect - wait and flush
+                time.sleep(0.2)  # Reduced from 0.5s for better performance
                 sock.setblocking(False)
                 try:
                     while True:
@@ -104,13 +103,12 @@ class ChameleonConnectionBlocking:
 
                 # Receive response - read until we get DONE/ERROR or main timeout expires
                 # CRITICAL: HF2211A is VERY slow and sends data in bursts with long gaps
-                # We MUST wait the full timeout period to get complete response
                 response_data = bytearray()
                 start_time = time.time()
                 last_data_time = start_time
 
                 # Use shorter individual recv timeouts but keep looping until main timeout
-                sock.settimeout(0.3)
+                sock.settimeout(0.2)  # Reduced from 0.3s for faster responses
 
                 while time.time() - start_time < self.timeout:
                     try:
@@ -124,8 +122,8 @@ class ChameleonConnectionBlocking:
                             response_str = response_data.decode("utf-8", errors="ignore")
                             if "DONE" in response_str or "ERROR" in response_str:
                                 _LOGGER.debug("Got complete response with terminator")
-                                # Wait a tiny bit more to catch any trailing data
-                                time.sleep(0.1)
+                                # Wait briefly to catch any trailing data
+                                time.sleep(0.05)  # Reduced from 0.1s
                                 try:
                                     trailing = sock.recv(4096)
                                     if trailing:
@@ -163,8 +161,8 @@ class ChameleonConnectionBlocking:
                 # Close socket immediately
                 sock.close()
 
-                # Delay before next command (HF2211A needs time to clear buffers)
-                time.sleep(0.3)
+                # Brief delay before next command (HF2211A needs time to clear buffers)
+                time.sleep(0.1)  # Reduced from 0.3s for better performance
 
                 return response
 

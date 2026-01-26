@@ -163,15 +163,45 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
         return None
 
     @property
+    def media_title(self) -> str | None:
+        """Return the title of current playing media (shows zone and input)."""
+        zone_state = self.coordinator.data.get(self._zone_id)
+        if not zone_state:
+            return f"Zone {self._zone_id}"
+
+        # Show current input if available
+        if zone_state.input_id is not None:
+            input_name = None
+            for inp in self._inputs:
+                if inp[CONF_INPUT_ID] == zone_state.input_id:
+                    input_name = inp[CONF_INPUT_NAME]
+                    break
+
+            if input_name:
+                return f"Zone {self._zone_id}: {input_name}"
+            else:
+                return f"Zone {self._zone_id}: Input {zone_state.input_id}"
+
+        return f"Zone {self._zone_id}"
+
+    @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
         """Return additional state attributes."""
         zone_state = self.coordinator.data.get(self._zone_id)
 
-        return {
+        attrs = {
+            "zone_number": self._zone_id,
+            "zone_name": self._zone_name,
             "knox_zone_id": self._zone_id,
             "knox_volume_raw": zone_state.volume if zone_state else None,
             "integration_version": "2.0.0",
         }
+
+        # Add input_id if available
+        if zone_state and zone_state.input_id is not None:
+            attrs["input_number"] = zone_state.input_id
+
+        return attrs
 
     async def async_turn_on(self) -> None:
         """Turn the zone on (unmute)."""
