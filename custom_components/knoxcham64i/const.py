@@ -4,7 +4,7 @@ DOMAIN = "knoxcham64i"
 
 DEFAULT_PORT = 8899
 DEFAULT_NAME = "Knox Chameleon64i"
-DEFAULT_SCAN_INTERVAL = 60  # seconds
+DEFAULT_SCAN_INTERVAL = 300  # seconds (5 minutes - local state updated on commands)
 MIN_SCAN_INTERVAL = 10  # seconds (prevent hammering device)
 MAX_SCAN_INTERVAL = 300  # seconds (5 minutes max)
 

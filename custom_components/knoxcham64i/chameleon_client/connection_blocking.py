@@ -39,7 +39,7 @@ class ChameleonConnectionBlocking:
 
         self._socket: Optional[socket.socket] = None
         self._connected = False
-        self._lock = asyncio.Lock()  # Serialize commands
+        # NOTE: No lock needed - fresh sockets per command are independent
 
     @property
     def is_connected(self) -> bool:
@@ -217,14 +217,13 @@ class ChameleonConnectionBlocking:
         raise ChameleonConnectionError("Max retries exceeded")
 
     async def send_command(self, command: str) -> str:
-        """Send command (async wrapper with locking).
+        """Send command (async wrapper for concurrent execution).
 
-        This wraps the blocking socket code in run_in_executor,
-        exactly like the old working code.
+        This wraps the blocking socket code in run_in_executor.
+        Each command uses a fresh socket, so concurrent execution is safe.
         """
-        async with self._lock:
-            loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(None, self._send_command_blocking, command)
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._send_command_blocking, command)
 
     async def health_check(self) -> bool:
         """Check if connection is healthy.
