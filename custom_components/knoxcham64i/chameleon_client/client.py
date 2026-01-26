@@ -6,7 +6,7 @@ import re
 from typing import Dict, List, Optional
 
 from .commands import ChameleonCommands
-from .connection import ChameleonConnection
+from .connection_blocking import ChameleonConnectionBlocking
 from .exceptions import ChameleonCommandError, ChameleonProtocolError
 from .models import ZoneState
 
@@ -20,27 +20,24 @@ class ChameleonClient:
         self,
         host: str,
         port: int = 8899,
-        timeout: float = 5.0,
+        timeout: float = 5.0,  # HF2211A adapter is very slow, needs longer timeout
         max_retries: int = 3,
-        use_persistent_connection: bool = False,  # Default to socket-per-command
     ) -> None:
         """Initialize client.
 
         Args:
             host: Device IP address or hostname
             port: TCP port (default 8899)
-            timeout: Command timeout in seconds
+            timeout: Socket timeout in seconds (default 5.0 for HF2211A compatibility)
             max_retries: Maximum retry attempts
-            use_persistent_connection: If False, uses socket-per-command (HF2211A compat)
         """
         self.host = host
         self.port = port
-        self._connection = ChameleonConnection(
+        self._connection = ChameleonConnectionBlocking(
             host=host,
             port=port,
             timeout=timeout,
             max_retries=max_retries,
-            use_persistent_connection=use_persistent_connection,
         )
         self._commands = ChameleonCommands()
 
