@@ -153,6 +153,8 @@ class KnoxOptionsFlowHandler(config_entries.OptionsFlow):
         self._config_entry = config_entry
         self._zones = config_entry.data.get(CONF_ZONES, []).copy()
         self._inputs = config_entry.data.get(CONF_INPUTS, []).copy()
+        # Track import statistics
+        self._import_stats = {"added": 0, "updated": 0, "total": 0}
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -351,9 +353,14 @@ class KnoxOptionsFlowHandler(config_entries.OptionsFlow):
                         existing_ids = {z[CONF_ZONE_ID] for z in self._zones}
                         new_zones = [z for z in self._zones]
 
+                        # Track statistics
+                        added_count = 0
+                        updated_count = 0
+
                         for imported in imported_zones:
                             if imported[CONF_ZONE_ID] not in existing_ids:
                                 new_zones.append(imported)
+                                added_count += 1
                             else:
                                 # Replace existing zone
                                 new_zones = [
@@ -361,9 +368,17 @@ class KnoxOptionsFlowHandler(config_entries.OptionsFlow):
                                     if z[CONF_ZONE_ID] != imported[CONF_ZONE_ID]
                                 ]
                                 new_zones.append(imported)
+                                updated_count += 1
 
                         self._zones = sorted(new_zones, key=lambda x: x[CONF_ZONE_ID])
                         await self._save_config()
+
+                        # Store import statistics for success message
+                        self._import_stats = {
+                            "added": added_count,
+                            "updated": updated_count,
+                            "total": len(imported_zones),
+                        }
 
                         return self.async_show_progress_done(next_step_id="import_success")
 
@@ -395,11 +410,28 @@ class KnoxOptionsFlowHandler(config_entries.OptionsFlow):
         if user_input is not None:
             return await self.async_step_init()
 
+        # Build detailed import summary
+        added = self._import_stats.get("added", 0)
+        updated = self._import_stats.get("updated", 0)
+        total = self._import_stats.get("total", 0)
+
+        summary_parts = []
+        if added > 0:
+            summary_parts.append(f"{added} new zone{'s' if added != 1 else ''} added")
+        if updated > 0:
+            summary_parts.append(f"{updated} existing zone{'s' if updated != 1 else ''} updated")
+
+        import_summary = ", ".join(summary_parts) if summary_parts else "No changes"
+
         return self.async_show_form(
             step_id="import_success",
             data_schema=vol.Schema({}),
             description_placeholders={
                 "zones_count": str(len(self._zones)),
+                "import_summary": import_summary,
+                "added_count": str(added),
+                "updated_count": str(updated),
+                "total_imported": str(total),
             },
         )
 

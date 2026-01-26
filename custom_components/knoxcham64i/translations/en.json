@@ -104,7 +104,7 @@
       },
       "import_success": {
         "title": "Import Successful",
-        "description": "Successfully imported zones!\n\nTotal zones now configured: {zones_count}\n\nPress Submit to return to the main menu."
+        "description": "Successfully imported zones!\n\nImport summary: {import_summary}\n\nTotal zones now configured: {zones_count}\n\nPress Submit to return to the main menu."
       }
     },
     "error": {
