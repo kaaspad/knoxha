@@ -98,6 +98,9 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         # Device name comes from zone_name in device_info
         self._attr_name = None
 
+        # Set icon to speaker (these are passive speaker zones, not active players)
+        self._attr_icon = "mdi:speaker"
+
         # Set supported features
         self._attr_supported_features = (
             MediaPlayerEntityFeature.TURN_ON
