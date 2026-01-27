@@ -5,7 +5,7 @@
   "dependencies": [],
   "codeowners": ["@boaz"],
   "requirements": [],
-  "version": "0.2.0",
+  "version": "1.0.0",
   "config_flow": true,
   "iot_class": "local_push",
   "integration_type": "hub"
