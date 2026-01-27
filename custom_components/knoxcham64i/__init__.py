@@ -116,12 +116,21 @@ async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         return
 
     coordinator = data["coordinator"]
-    old_zones = set(zone["id"] for zone in coordinator.config_entry.data.get(CONF_ZONES, []))
-    new_zones = set(zone["id"] for zone in entry.data.get(CONF_ZONES, []))
+
+    # FIX #1: Compare against RUNTIME state (coordinator.data keys) not config_entry
+    # coordinator.config_entry and entry are the SAME object after async_update_entry,
+    # so comparing them always shows "no change". Instead, compare what zones
+    # currently have entities (coordinator.data.keys()) vs new zone list.
+    old_zone_ids = set(coordinator.data.keys()) if coordinator.data else set()
+    new_zone_ids = set(zone["id"] for zone in entry.data.get(CONF_ZONES, []))
 
     # Check if zones changed (added or removed)
-    if old_zones != new_zones:
-        _LOGGER.info("Zones changed, performing full reload")
+    if old_zone_ids != new_zone_ids:
+        _LOGGER.info(
+            "Zones changed: %d -> %d zones, performing full reload",
+            len(old_zone_ids),
+            len(new_zone_ids)
+        )
         await hass.config_entries.async_reload(entry.entry_id)
     else:
         # Only inputs changed - entities read inputs dynamically from config_entry

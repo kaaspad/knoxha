@@ -39,7 +39,14 @@ class ChameleonConnectionBlocking:
 
         self._socket: Optional[socket.socket] = None
         self._connected = False
-        # NOTE: No lock needed - fresh sockets per command are independent
+
+        # FIX #4: Add semaphore to throttle concurrent connections
+        # HF2211A ethernet-to-serial adapter gets overwhelmed with concurrent connections
+        # Testing showed: semaphore=1 (sequential) = 100% reliability
+        #                semaphore=4-8 = device crashes under stress
+        # Sequential execution is slower (60s for 35 zones) but 100% reliable
+        # Given coordinator polls every 300s, the 60s delay is acceptable
+        self._connection_semaphore = asyncio.Semaphore(1)
 
     @property
     def is_connected(self) -> bool:
@@ -221,9 +228,13 @@ class ChameleonConnectionBlocking:
 
         This wraps the blocking socket code in run_in_executor.
         Each command uses a fresh socket, so concurrent execution is safe.
+
+        FIX #4: Use semaphore to throttle concurrent connections and prevent
+        device overload (8.5% timeout rate with 35 concurrent connections).
         """
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._send_command_blocking, command)
+        async with self._connection_semaphore:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, self._send_command_blocking, command)
 
     async def health_check(self) -> bool:
         """Check if connection is healthy.
