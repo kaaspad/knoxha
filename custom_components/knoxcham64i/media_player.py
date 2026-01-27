@@ -343,7 +343,7 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "zone_name": self._zone_name,
             "knox_zone_id": self._zone_id,
             "knox_volume_raw": zone_state.volume if zone_state else None,
-            "integration_version": "1.1.1",
+            "integration_version": "1.1.2",
         }
 
         # Add input_id if available
