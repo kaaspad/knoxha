@@ -78,10 +78,11 @@
       },
       "add_input": {
         "title": "Add Input Source",
-        "description": "Currently configured: {inputs_count} inputs\n\nSelect an input ID and enter a friendly name.",
+        "description": "Currently configured: {inputs_count} inputs\n\nSelect an input ID and enter a friendly name.\n\nOptionally link a media player to show its album art and track info on zones using this input.",
         "data": {
           "input_id": "Input ID",
-          "input_name": "Input Name"
+          "input_name": "Input Name",
+          "source_entity": "Source Media Player (optional)"
         }
       },
       "remove_input": {

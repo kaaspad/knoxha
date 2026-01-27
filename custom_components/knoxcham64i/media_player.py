@@ -26,6 +26,7 @@ from .const import (
     CONF_HA_AREA,
     CONF_INPUT_NAME,
     CONF_INPUT_ID,
+    CONF_INPUT_SOURCE_ENTITY,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -135,6 +136,27 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         """Get current input list from config entry (updates dynamically)."""
         return self._config_entry.data.get(CONF_INPUTS, [])
 
+    def _get_source_media_player_state(self) -> Any | None:
+        """Get the state of the source media player for current input.
+
+        Returns the HA state object for the media player entity linked to
+        the current input, enabling media passthrough (album art, track info).
+        """
+        zone_state = self.coordinator.data.get(self._zone_id)
+        if not zone_state or zone_state.input_id is None:
+            return None
+
+        # Find the input configuration for current input
+        for inp in self._inputs:
+            if inp[CONF_INPUT_ID] == zone_state.input_id:
+                source_entity_id = inp.get(CONF_INPUT_SOURCE_ENTITY)
+                if source_entity_id:
+                    # Get the state from HA
+                    return self.hass.states.get(source_entity_id)
+                break
+
+        return None
+
     @property
     def source_list(self) -> list[str] | None:
         """Return the list of available input sources (updates dynamically)."""
@@ -210,7 +232,18 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
     @property
     def media_title(self) -> str | None:
-        """Return the title of current playing media (shows zone and input)."""
+        """Return the title of current playing media.
+
+        Passthrough from source media player if configured, otherwise show zone/input.
+        """
+        # Try to get media title from source player
+        source_state = self._get_source_media_player_state()
+        if source_state:
+            media_title = source_state.attributes.get("media_title")
+            if media_title:
+                return media_title
+
+        # Fallback to zone and input name
         zone_state = self.coordinator.data.get(self._zone_id)
         if not zone_state:
             return f"Zone {self._zone_id}"
@@ -229,6 +262,54 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 return f"Zone {self._zone_id}: Input {zone_state.input_id}"
 
         return f"Zone {self._zone_id}"
+
+    @property
+    def media_artist(self) -> str | None:
+        """Return the artist of current playing media (passthrough from source)."""
+        source_state = self._get_source_media_player_state()
+        if source_state:
+            return source_state.attributes.get("media_artist")
+        return None
+
+    @property
+    def media_album_name(self) -> str | None:
+        """Return the album name of current playing media (passthrough from source)."""
+        source_state = self._get_source_media_player_state()
+        if source_state:
+            return source_state.attributes.get("media_album_name")
+        return None
+
+    @property
+    def media_image_url(self) -> str | None:
+        """Return the image URL of current playing media (passthrough from source)."""
+        source_state = self._get_source_media_player_state()
+        if source_state:
+            return source_state.attributes.get("entity_picture")
+        return None
+
+    @property
+    def media_duration(self) -> int | None:
+        """Return the duration of current playing media (passthrough from source)."""
+        source_state = self._get_source_media_player_state()
+        if source_state:
+            return source_state.attributes.get("media_duration")
+        return None
+
+    @property
+    def media_position(self) -> int | None:
+        """Return the position of current playing media (passthrough from source)."""
+        source_state = self._get_source_media_player_state()
+        if source_state:
+            return source_state.attributes.get("media_position")
+        return None
+
+    @property
+    def media_position_updated_at(self) -> Any | None:
+        """Return when the media position was last updated (passthrough from source)."""
+        source_state = self._get_source_media_player_state()
+        if source_state:
+            return source_state.attributes.get("media_position_updated_at")
+        return None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:

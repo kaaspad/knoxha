@@ -22,6 +22,7 @@ CONF_HA_AREA = "ha_area"  # Home Assistant area/zone assignment
 # Input configuration
 CONF_INPUT_NAME = "name"
 CONF_INPUT_ID = "id"
+CONF_INPUT_SOURCE_ENTITY = "source_entity"  # HA media player entity for passthrough
 
 # Default zone names
 DEFAULT_ZONE_NAMES = {

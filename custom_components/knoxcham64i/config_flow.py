@@ -26,6 +26,7 @@ from .const import (
     CONF_HA_AREA,
     CONF_INPUT_NAME,
     CONF_INPUT_ID,
+    CONF_INPUT_SOURCE_ENTITY,
 )
 from .chameleon_client import ChameleonClient, ChameleonError
 
@@ -444,6 +445,7 @@ class KnoxOptionsFlowHandler(config_entries.OptionsFlow):
         if user_input is not None:
             input_id = int(user_input[CONF_INPUT_ID])
             input_name = user_input[CONF_INPUT_NAME].strip()
+            source_entity = user_input.get(CONF_INPUT_SOURCE_ENTITY)
 
             if any(inp[CONF_INPUT_ID] == input_id for inp in self._inputs):
                 errors[CONF_INPUT_ID] = "input_already_exists"
@@ -451,10 +453,14 @@ class KnoxOptionsFlowHandler(config_entries.OptionsFlow):
                 errors[CONF_INPUT_NAME] = "input_name_required"
             else:
                 # Add input
-                self._inputs.append({
+                input_data = {
                     CONF_INPUT_ID: input_id,
                     CONF_INPUT_NAME: input_name,
-                })
+                }
+                # Add source entity if provided (optional)
+                if source_entity:
+                    input_data[CONF_INPUT_SOURCE_ENTITY] = source_entity
+                self._inputs.append(input_data)
                 self._inputs.sort(key=lambda x: x[CONF_INPUT_ID])
                 await self._save_config()
                 return await self.async_step_init()  # Return to main menu
@@ -474,6 +480,9 @@ class KnoxOptionsFlowHandler(config_entries.OptionsFlow):
                     for input_id in available_ids
                 }),
                 vol.Required(CONF_INPUT_NAME): str,
+                vol.Optional(CONF_INPUT_SOURCE_ENTITY): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="media_player")
+                ),
             }),
             errors=errors,
             description_placeholders={
