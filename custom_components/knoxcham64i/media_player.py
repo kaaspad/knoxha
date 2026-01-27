@@ -93,9 +93,10 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         # Set unique ID
         self._attr_unique_id = f"{entry_id}_{zone_id}"
 
-        # FIX #5: Set entity name from zone config, not device name
-        # This ensures entities show correct names from CSV import
-        self._attr_name = zone_name
+        # FIX #5: Entity name set to None - inherits from device name
+        # With has_entity_name=True, this creates clean entity IDs like media_player.study
+        # Device name comes from zone_name in device_info
+        self._attr_name = None
 
         # Set supported features
         self._attr_supported_features = (
