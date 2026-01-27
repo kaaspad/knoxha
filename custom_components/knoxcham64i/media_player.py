@@ -144,17 +144,35 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         """
         zone_state = self.coordinator.data.get(self._zone_id)
         if not zone_state or zone_state.input_id is None:
+            _LOGGER.debug("Zone %d: No zone state or input_id", self._zone_id)
             return None
+
+        _LOGGER.debug("Zone %d: Current input_id=%d, configured inputs=%s",
+                      self._zone_id, zone_state.input_id,
+                      [(i[CONF_INPUT_ID], i.get(CONF_INPUT_SOURCE_ENTITY)) for i in self._inputs])
 
         # Find the input configuration for current input
         for inp in self._inputs:
             if inp[CONF_INPUT_ID] == zone_state.input_id:
                 source_entity_id = inp.get(CONF_INPUT_SOURCE_ENTITY)
+                _LOGGER.debug("Zone %d: Found input config, source_entity=%s",
+                              self._zone_id, source_entity_id)
                 if source_entity_id:
                     # Get the state from HA
-                    return self.hass.states.get(source_entity_id)
+                    source_state = self.hass.states.get(source_entity_id)
+                    if source_state:
+                        _LOGGER.debug("Zone %d: Source state found: entity_picture=%s, media_title=%s",
+                                      self._zone_id,
+                                      source_state.attributes.get("entity_picture"),
+                                      source_state.attributes.get("media_title"))
+                    else:
+                        _LOGGER.warning("Zone %d: Source entity %s not found in HA states",
+                                        self._zone_id, source_entity_id)
+                    return source_state
                 break
 
+        _LOGGER.debug("Zone %d: No source entity configured for input %d",
+                      self._zone_id, zone_state.input_id)
         return None
 
     @property
