@@ -10,12 +10,17 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PORT, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .chameleon_client import ChameleonClient, ChameleonError
 from .const import DOMAIN, DEFAULT_PORT, CONF_ZONES, DEFAULT_SCAN_INTERVAL
 
 _LOGGER = logging.getLogger(__name__)
+
+# Cache storage version and key
+STORAGE_VERSION = 1
+STORAGE_KEY = f"{DOMAIN}.zone_state_cache"
 
 PLATFORMS = [Platform.MEDIA_PLAYER]
 
@@ -31,6 +36,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "knox: startup stage=begin host=%s zones=%d",
         host, len(zones)
     )
+
+    # Create state cache store (persists across restarts)
+    store = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY}.{entry.entry_id}")
+
+    # Load cached state for fast startup
+    cache_start = time.monotonic()
+    cached_data = await store.async_load()
+    cached_state: dict[int, Any] = {}
+
+    if cached_data and isinstance(cached_data, dict):
+        # Convert string keys back to int (JSON serialization converts int keys to strings)
+        cached_state = {int(k): v for k, v in cached_data.get("zones", {}).items()}
+        cache_age = cached_data.get("timestamp", 0)
+        cache_ms = int((time.monotonic() - cache_start) * 1000)
+        _LOGGER.info(
+            "knox: startup stage=cache_load duration_ms=%d zones=%d cache_age_s=%.0f",
+            cache_ms, len(cached_state), time.time() - cache_age
+        )
+    else:
+        cache_ms = int((time.monotonic() - cache_start) * 1000)
+        _LOGGER.info(
+            "knox: startup stage=cache_load duration_ms=%d zones=0 (no cache)",
+            cache_ms
+        )
 
     # Create client
     client = ChameleonClient(host=host, port=port, timeout=5.0, max_retries=3)
@@ -91,6 +120,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 refresh_ms, len(zone_ids)
             )
 
+            # Save to cache for next startup (non-blocking)
+            hass.async_create_task(
+                store.async_save({"zones": states, "timestamp": time.time()})
+            )
+
             return states
 
         except ChameleonError as err:
@@ -109,14 +143,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL),
     )
 
-    # Fetch initial data
-    initial_refresh_start = time.monotonic()
-    await coordinator.async_config_entry_first_refresh()
-    initial_refresh_ms = int((time.monotonic() - initial_refresh_start) * 1000)
-    _LOGGER.info(
-        "knox: startup stage=initial_refresh duration_ms=%d zones=%d",
-        initial_refresh_ms, len(zones)
-    )
+    # Fast startup: use cached state if available, refresh in background
+    zone_ids = [zone["id"] for zone in zones]
+    if cached_state and all(z in cached_state for z in zone_ids):
+        # All zones have cached state - use it immediately
+        _LOGGER.info(
+            "knox: startup stage=using_cache zones=%d (skipping initial refresh)",
+            len(zone_ids)
+        )
+        coordinator.async_set_updated_data(cached_state)
+
+        # Schedule background refresh to update state (non-blocking)
+        async def background_refresh():
+            await coordinator.async_request_refresh()
+            _LOGGER.info("knox: startup background refresh complete")
+
+        hass.async_create_task(background_refresh())
+    else:
+        # No cache or incomplete cache - must do initial refresh (blocking)
+        initial_refresh_start = time.monotonic()
+        await coordinator.async_config_entry_first_refresh()
+        initial_refresh_ms = int((time.monotonic() - initial_refresh_start) * 1000)
+        _LOGGER.info(
+            "knox: startup stage=initial_refresh duration_ms=%d zones=%d",
+            initial_refresh_ms, len(zones)
+        )
 
     # Store client and coordinator
     hass.data.setdefault(DOMAIN, {})
