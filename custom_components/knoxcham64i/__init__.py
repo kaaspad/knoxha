@@ -35,7 +35,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Create client
     client = ChameleonClient(host=host, port=port, timeout=5.0, max_retries=3)
 
-    # Test connection
+    # Test connection and start scheduler
     connect_start = time.monotonic()
     try:
         await client.connect()
@@ -62,28 +62,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def async_update_data() -> dict[int, Any]:
         """Fetch data from Knox device.
 
-        FIX for Issue B: Check if a priority command is waiting before starting
-        a long refresh cycle. If so, skip this refresh to let the command through.
+        Uses LOW priority commands which yield to HIGH (user actions).
+        The scheduler ensures user commands preempt refresh queries.
         """
         refresh_start = time.monotonic()
         try:
-            # Check if a user command is waiting - yield to it
-            if client.priority_command_waiting:
-                _LOGGER.info(
-                    "knox: coordinator skipping refresh - priority command waiting"
-                )
-                # Return existing data to avoid triggering unavailable state
-                return coordinator.data if coordinator.data else {}
-
-            # Get list of zone IDs
             zone_ids = [zone["id"] for zone in zones]
 
             if not zone_ids:
                 _LOGGER.debug("No zones configured, skipping update")
                 return {}
 
+            # Log queue status before refresh
+            high_pending = client.high_queue_size
+            if high_pending > 0:
+                _LOGGER.info(
+                    "knox: coordinator starting refresh with %d HIGH commands pending",
+                    high_pending
+                )
+
             # Fetch state for all zones
-            _LOGGER.debug("Updating state for zones: %s", zone_ids)
+            # VTB queries go into LOW queue and yield to HIGH commands automatically
             states = await client.get_all_zones_state(zone_ids)
 
             refresh_ms = int((time.monotonic() - refresh_start) * 1000)
@@ -167,10 +166,7 @@ async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
     coordinator = data["coordinator"]
 
-    # FIX #1: Compare against RUNTIME state (coordinator.data keys) not config_entry
-    # coordinator.config_entry and entry are the SAME object after async_update_entry,
-    # so comparing them always shows "no change". Instead, compare what zones
-    # currently have entities (coordinator.data.keys()) vs new zone list.
+    # Compare against RUNTIME state (coordinator.data keys) not config_entry
     old_zone_ids = set(coordinator.data.keys()) if coordinator.data else set()
     new_zone_ids = set(zone["id"] for zone in entry.data.get(CONF_ZONES, []))
 

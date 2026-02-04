@@ -47,20 +47,23 @@ class ChameleonClient:
         return self._connection.is_connected
 
     @property
-    def is_lock_available(self) -> bool:
-        """Check if the connection lock is available.
+    def has_high_pending(self) -> bool:
+        """Check if any HIGH priority commands (user actions) are pending.
 
-        Used by coordinator to skip refresh if a command is pending.
+        Coordinator should yield refresh if this is True to allow
+        user commands to execute promptly.
         """
-        return self._connection.is_lock_available
+        return self._connection.has_high_pending
 
     @property
-    def priority_command_waiting(self) -> bool:
-        """Check if a priority command (user action) is waiting.
+    def high_queue_size(self) -> int:
+        """Number of HIGH priority commands waiting in queue."""
+        return self._connection.high_queue_size
 
-        Coordinator should yield refresh if this is True.
-        """
-        return self._connection.priority_command_waiting
+    @property
+    def low_queue_size(self) -> int:
+        """Number of LOW priority commands waiting in queue."""
+        return self._connection.low_queue_size
 
     async def connect(self) -> None:
         """Connect to device."""
