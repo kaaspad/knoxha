@@ -5,6 +5,7 @@ import logging
 import socket
 import time
 from typing import Optional
+import itertools
 
 from .exceptions import (
     ChameleonConnectionError,
@@ -13,9 +14,24 @@ from .exceptions import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Command trace ID counter for instrumentation
+_trace_counter = itertools.count(1)
+
 
 class ChameleonConnectionBlocking:
-    """Blocking socket connection (like old pyknox code that worked)."""
+    """Blocking socket connection (like old pyknox code that worked).
+
+    FIX: Added priority command support and instrumentation for Issue A & B.
+    - User commands (mute, volume, source) use send_command_priority() with timeout
+    - Polling commands use send_command() without timeout (can wait)
+    - All commands have trace IDs for debugging
+    """
+
+    # Lock acquisition timeout for priority commands (user actions)
+    PRIORITY_LOCK_TIMEOUT = 5.0  # seconds - fail fast if coordinator is hogging lock
+
+    # Warning threshold for lock wait time
+    LOCK_WAIT_WARNING_MS = 2000  # Log warning if lock wait > 2 seconds
 
     def __init__(
         self,
@@ -48,6 +64,13 @@ class ChameleonConnectionBlocking:
         # Given coordinator polls every 300s, the 60s delay is acceptable
         self._connection_semaphore = asyncio.Semaphore(1)
 
+        # Track if a priority command is waiting (for coordinator to yield)
+        self._priority_command_waiting = False
+
+        # Track current command for debugging
+        self._current_command: Optional[str] = None
+        self._current_trace_id: Optional[int] = None
+
     @property
     def is_connected(self) -> bool:
         """Check if connected.
@@ -55,6 +78,22 @@ class ChameleonConnectionBlocking:
         Always returns True since we use fresh sockets per command.
         """
         return True
+
+    @property
+    def is_lock_available(self) -> bool:
+        """Check if the connection lock is available (not held by another command).
+
+        Used by coordinator to decide whether to skip refresh if a command is pending.
+        """
+        return not self._connection_semaphore.locked()
+
+    @property
+    def priority_command_waiting(self) -> bool:
+        """Check if a priority command is waiting for the lock.
+
+        Coordinator should yield if this is True.
+        """
+        return self._priority_command_waiting
 
     async def connect(self) -> None:
         """Connect (no-op for fresh-socket-per-command mode).
@@ -72,13 +111,18 @@ class ChameleonConnectionBlocking:
         _LOGGER.debug("Disconnect called (no-op - sockets closed per command)")
         pass
 
-    def _send_command_blocking(self, command: str) -> str:
+    def _send_command_blocking(self, command: str, trace_id: int) -> str:
         """Send command using blocking socket with fresh connection per command.
 
         CRITICAL FOR HF2211A: The adapter has buffering issues that cause
         response contamination with persistent connections. We MUST create
         a fresh socket for each command to get clean responses.
+
+        Args:
+            command: Knox command string
+            trace_id: Unique trace ID for this command (for instrumentation)
         """
+        io_start = time.monotonic()
         for attempt in range(self.max_retries):
             sock = None
             try:
@@ -187,7 +231,11 @@ class ChameleonConnectionBlocking:
                     raise socket.timeout("No response received")
 
                 response = response_data.decode("utf-8", errors="ignore").strip()
-                _LOGGER.debug("Command %s complete: %d bytes", command, len(response_data))
+                io_ms = int((time.monotonic() - io_start) * 1000)
+                _LOGGER.debug(
+                    "cmd id=%d cmd=%s io_ms=%d bytes=%d ok=true",
+                    trace_id, command, io_ms, len(response_data)
+                )
 
                 # Close socket immediately
                 sock.close()
@@ -198,7 +246,11 @@ class ChameleonConnectionBlocking:
                 return response
 
             except socket.timeout:
-                _LOGGER.warning("Timeout on attempt %d for command %s", attempt + 1, command)
+                io_ms = int((time.monotonic() - io_start) * 1000)
+                _LOGGER.warning(
+                    "cmd id=%d cmd=%s io_ms=%d attempt=%d/%d ok=false err=Timeout",
+                    trace_id, command, io_ms, attempt + 1, self.max_retries
+                )
                 if sock:
                     try:
                         sock.close()
@@ -210,7 +262,11 @@ class ChameleonConnectionBlocking:
                 raise ChameleonTimeoutError(f"Command timed out: {command}")
 
             except Exception as err:
-                _LOGGER.error("Error sending command %s: %s", command, err)
+                io_ms = int((time.monotonic() - io_start) * 1000)
+                _LOGGER.error(
+                    "cmd id=%d cmd=%s io_ms=%d ok=false err=%s",
+                    trace_id, command, io_ms, err
+                )
                 if sock:
                     try:
                         sock.close()
@@ -223,18 +279,87 @@ class ChameleonConnectionBlocking:
 
         raise ChameleonConnectionError("Max retries exceeded")
 
-    async def send_command(self, command: str) -> str:
+    async def send_command(self, command: str, priority: bool = False) -> str:
         """Send command (async wrapper for concurrent execution).
 
         This wraps the blocking socket code in run_in_executor.
         Each command uses a fresh socket, so concurrent execution is safe.
 
+        Args:
+            command: Knox command string
+            priority: If True, use timeout on lock acquisition (for user commands)
+
         FIX #4: Use semaphore to throttle concurrent connections and prevent
         device overload (8.5% timeout rate with 35 concurrent connections).
+
+        FIX for Issue B: Priority commands have timeout on lock acquisition,
+        so user actions don't wait indefinitely for coordinator refresh.
         """
-        async with self._connection_semaphore:
-            loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(None, self._send_command_blocking, command)
+        trace_id = next(_trace_counter)
+        queued_time = time.monotonic()
+
+        if priority:
+            self._priority_command_waiting = True
+
+        try:
+            # Try to acquire lock with timeout for priority commands
+            if priority:
+                try:
+                    await asyncio.wait_for(
+                        self._connection_semaphore.acquire(),
+                        timeout=self.PRIORITY_LOCK_TIMEOUT
+                    )
+                except asyncio.TimeoutError:
+                    lock_wait_ms = int((time.monotonic() - queued_time) * 1000)
+                    _LOGGER.error(
+                        "cmd id=%d cmd=%s lock_wait_ms=%d ok=false err=LockTimeout "
+                        "(coordinator may be blocking - consider restarting integration)",
+                        trace_id, command, lock_wait_ms
+                    )
+                    raise ChameleonTimeoutError(
+                        f"Command {command} timed out waiting for lock "
+                        f"(waited {lock_wait_ms}ms, another command may be stuck)"
+                    )
+            else:
+                await self._connection_semaphore.acquire()
+
+            lock_wait_ms = int((time.monotonic() - queued_time) * 1000)
+
+            # Log warning if lock wait was long
+            if lock_wait_ms > self.LOCK_WAIT_WARNING_MS:
+                _LOGGER.warning(
+                    "cmd id=%d cmd=%s lock_wait_ms=%d (slow - coordinator may be running)",
+                    trace_id, command, lock_wait_ms
+                )
+
+            self._current_command = command
+            self._current_trace_id = trace_id
+
+            try:
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(
+                    None, self._send_command_blocking, command, trace_id
+                )
+                return result
+            finally:
+                self._current_command = None
+                self._current_trace_id = None
+                self._connection_semaphore.release()
+
+        finally:
+            if priority:
+                self._priority_command_waiting = False
+
+    async def send_command_priority(self, command: str) -> str:
+        """Send a priority command with timeout on lock acquisition.
+
+        Use this for user-initiated commands (mute, volume, source) that should
+        fail fast rather than wait behind a long coordinator refresh.
+
+        Raises:
+            ChameleonTimeoutError: If lock not acquired within PRIORITY_LOCK_TIMEOUT
+        """
+        return await self.send_command(command, priority=True)
 
     async def health_check(self) -> bool:
         """Check if connection is healthy.

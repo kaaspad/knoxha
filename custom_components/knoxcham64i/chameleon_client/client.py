@@ -46,6 +46,22 @@ class ChameleonClient:
         """Check if client is connected."""
         return self._connection.is_connected
 
+    @property
+    def is_lock_available(self) -> bool:
+        """Check if the connection lock is available.
+
+        Used by coordinator to skip refresh if a command is pending.
+        """
+        return self._connection.is_lock_available
+
+    @property
+    def priority_command_waiting(self) -> bool:
+        """Check if a priority command (user action) is waiting.
+
+        Coordinator should yield refresh if this is True.
+        """
+        return self._connection.priority_command_waiting
+
     async def connect(self) -> None:
         """Connect to device."""
         await self._connection.connect()
@@ -63,7 +79,7 @@ class ChameleonClient:
     # ========================================================================
 
     async def _send_command(self, command: str) -> str:
-        """Send command and get raw response.
+        """Send command and get raw response (for polling/queries).
 
         Args:
             command: Knox command string
@@ -76,6 +92,24 @@ class ChameleonClient:
             ChameleonProtocolError: Invalid response
         """
         response = await self._connection.send_command(command)
+        return response
+
+    async def _send_command_priority(self, command: str) -> str:
+        """Send priority command with timeout on lock acquisition.
+
+        Use this for user-initiated commands (mute, volume, source) that
+        should fail fast rather than wait behind coordinator refresh.
+
+        Args:
+            command: Knox command string
+
+        Returns:
+            Raw response from device
+
+        Raises:
+            ChameleonTimeoutError: If lock not acquired within timeout
+        """
+        response = await self._connection.send_command_priority(command)
         return response
 
     def _parse_response(self, response: str) -> Dict[str, any]:
@@ -121,7 +155,7 @@ class ChameleonClient:
     # ========================================================================
 
     async def set_input(self, zone: int, input_id: int) -> bool:
-        """Set input for a zone.
+        """Set input for a zone (user action - uses priority command).
 
         Args:
             zone: Zone number (1-64)
@@ -133,12 +167,14 @@ class ChameleonClient:
         Raises:
             ValueError: Invalid zone or input number
             ChameleonCommandError: Command failed
+            ChameleonTimeoutError: Lock acquisition timeout (coordinator blocking)
         """
         self._commands.validate_zone(zone)
         self._commands.validate_input(input_id)
 
         command = self._commands.set_input(zone, input_id)
-        response = await self._send_command(command)
+        # Use priority command - fails fast if coordinator is blocking
+        response = await self._send_command_priority(command)
         result = self._parse_response(response)
 
         if not result.get("success"):
@@ -202,7 +238,7 @@ class ChameleonClient:
     # ========================================================================
 
     async def set_volume(self, zone: int, volume: int) -> bool:
-        """Set volume for a zone.
+        """Set volume for a zone (user action - uses priority command).
 
         Args:
             zone: Zone number (1-64)
@@ -214,12 +250,14 @@ class ChameleonClient:
         Raises:
             ValueError: Invalid zone or volume
             ChameleonCommandError: Command failed
+            ChameleonTimeoutError: Lock acquisition timeout (coordinator blocking)
         """
         self._commands.validate_zone(zone)
         self._commands.validate_volume(volume)
 
         command = self._commands.set_volume(zone, volume)
-        response = await self._send_command(command)
+        # Use priority command - fails fast if coordinator is blocking
+        response = await self._send_command_priority(command)
         result = self._parse_response(response)
 
         if not result.get("success"):
@@ -278,7 +316,7 @@ class ChameleonClient:
     # ========================================================================
 
     async def set_mute(self, zone: int, mute: bool) -> bool:
-        """Set mute state for a zone.
+        """Set mute state for a zone (user action - uses priority command).
 
         Args:
             zone: Zone number (1-64)
@@ -290,11 +328,13 @@ class ChameleonClient:
         Raises:
             ValueError: Invalid zone number
             ChameleonCommandError: Command failed
+            ChameleonTimeoutError: Lock acquisition timeout (coordinator blocking)
         """
         self._commands.validate_zone(zone)
 
         command = self._commands.set_mute(zone, mute)
-        response = await self._send_command(command)
+        # Use priority command - fails fast if coordinator is blocking
+        response = await self._send_command_priority(command)
         result = self._parse_response(response)
 
         if not result.get("success"):

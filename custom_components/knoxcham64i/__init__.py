@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 import logging
+import time
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -21,14 +22,21 @@ PLATFORMS = [Platform.MEDIA_PLAYER]
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Knox Chameleon64i from a config entry."""
+    startup_start = time.monotonic()
     host = entry.data[CONF_HOST]
     port = entry.data.get(CONF_PORT, DEFAULT_PORT)
     zones = entry.data.get(CONF_ZONES, [])
+
+    _LOGGER.info(
+        "knox: startup stage=begin host=%s zones=%d",
+        host, len(zones)
+    )
 
     # Create client
     client = ChameleonClient(host=host, port=port, timeout=5.0, max_retries=3)
 
     # Test connection
+    connect_start = time.monotonic()
     try:
         await client.connect()
         connection_ok = await client.test_connection()
@@ -36,16 +44,37 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.error("Failed to connect to Knox device at %s:%s", host, port)
             raise ConfigEntryNotReady(f"Cannot connect to Knox device at {host}:{port}")
 
-        _LOGGER.info("Successfully connected to Knox device at %s:%s", host, port)
+        connect_ms = int((time.monotonic() - connect_start) * 1000)
+        _LOGGER.info(
+            "knox: startup stage=connect duration_ms=%d ok=true",
+            connect_ms
+        )
 
     except ChameleonError as err:
-        _LOGGER.error("Error connecting to Knox device: %s", err)
+        connect_ms = int((time.monotonic() - connect_start) * 1000)
+        _LOGGER.error(
+            "knox: startup stage=connect duration_ms=%d ok=false err=%s",
+            connect_ms, err
+        )
         raise ConfigEntryNotReady(f"Cannot connect to Knox device: {err}") from err
 
     # Create coordinator for state updates
     async def async_update_data() -> dict[int, Any]:
-        """Fetch data from Knox device."""
+        """Fetch data from Knox device.
+
+        FIX for Issue B: Check if a priority command is waiting before starting
+        a long refresh cycle. If so, skip this refresh to let the command through.
+        """
+        refresh_start = time.monotonic()
         try:
+            # Check if a user command is waiting - yield to it
+            if client.priority_command_waiting:
+                _LOGGER.info(
+                    "knox: coordinator skipping refresh - priority command waiting"
+                )
+                # Return existing data to avoid triggering unavailable state
+                return coordinator.data if coordinator.data else {}
+
             # Get list of zone IDs
             zone_ids = [zone["id"] for zone in zones]
 
@@ -56,12 +85,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Fetch state for all zones
             _LOGGER.debug("Updating state for zones: %s", zone_ids)
             states = await client.get_all_zones_state(zone_ids)
-            _LOGGER.debug("Got states: %s", {k: f"input={v.input_id}, vol={v.volume}, mute={v.is_muted}" for k, v in states.items()})
+
+            refresh_ms = int((time.monotonic() - refresh_start) * 1000)
+            _LOGGER.info(
+                "knox: coordinator stage=refresh duration_ms=%d zones=%d ok=true",
+                refresh_ms, len(zone_ids)
+            )
 
             return states
 
         except ChameleonError as err:
-            _LOGGER.error("Error fetching zone states: %s", err)
+            refresh_ms = int((time.monotonic() - refresh_start) * 1000)
+            _LOGGER.error(
+                "knox: coordinator stage=refresh duration_ms=%d ok=false err=%s",
+                refresh_ms, err
+            )
             raise UpdateFailed(f"Error communicating with Knox device: {err}") from err
 
     coordinator = DataUpdateCoordinator(
@@ -73,7 +111,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     # Fetch initial data
+    initial_refresh_start = time.monotonic()
     await coordinator.async_config_entry_first_refresh()
+    initial_refresh_ms = int((time.monotonic() - initial_refresh_start) * 1000)
+    _LOGGER.info(
+        "knox: startup stage=initial_refresh duration_ms=%d zones=%d",
+        initial_refresh_ms, len(zones)
+    )
 
     # Store client and coordinator
     hass.data.setdefault(DOMAIN, {})
@@ -87,6 +131,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Add update listener for config changes
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
+
+    total_startup_ms = int((time.monotonic() - startup_start) * 1000)
+    _LOGGER.info(
+        "knox: startup stage=complete duration_ms=%d zones=%d",
+        total_startup_ms, len(zones)
+    )
 
     return True
 
