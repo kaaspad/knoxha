@@ -311,37 +311,12 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             return source_state.attributes.get("media_album_name")
         return None
 
-    @property
-    def media_image_url(self) -> str | None:
-        """Return the image URL of current playing media (passthrough from source)."""
-        source_state = self._get_source_media_player_state()
-        if source_state:
-            return source_state.attributes.get("entity_picture")
-        return None
-
-    @property
-    def media_duration(self) -> int | None:
-        """Return the duration of current playing media (passthrough from source)."""
-        source_state = self._get_source_media_player_state()
-        if source_state:
-            return source_state.attributes.get("media_duration")
-        return None
-
-    @property
-    def media_position(self) -> int | None:
-        """Return the position of current playing media (passthrough from source)."""
-        source_state = self._get_source_media_player_state()
-        if source_state:
-            return source_state.attributes.get("media_position")
-        return None
-
-    @property
-    def media_position_updated_at(self) -> Any | None:
-        """Return when the media position was last updated (passthrough from source)."""
-        source_state = self._get_source_media_player_state()
-        if source_state:
-            return source_state.attributes.get("media_position_updated_at")
-        return None
+    # NOTE: media_image_url, media_position, media_duration, and
+    # media_position_updated_at passthrough removed. These caused the HA
+    # more-info dialog to render a media playback UI (progress bar, transport
+    # controls) that conflicted with the source dropdown - the entity only
+    # supports VOLUME/MUTE/SOURCE, not PLAY/PAUSE/SEEK. Also media_image_url
+    # returned the Sonos proxy URL creating a broken double-proxy chain.
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
@@ -353,7 +328,7 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "zone_name": self._zone_name,
             "knox_zone_id": self._zone_id,
             "knox_volume_raw": zone_state.volume if zone_state else None,
-            "integration_version": "1.3.1",
+            "integration_version": "1.3.2",
         }
 
         # Diagnostic: show last service call info
