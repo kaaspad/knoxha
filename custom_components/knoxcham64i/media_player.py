@@ -328,7 +328,7 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "zone_name": self._zone_name,
             "knox_zone_id": self._zone_id,
             "knox_volume_raw": zone_state.volume if zone_state else None,
-            "integration_version": "1.3.2",
+            "integration_version": "1.3.3",
         }
 
         # Diagnostic: show last service call info
