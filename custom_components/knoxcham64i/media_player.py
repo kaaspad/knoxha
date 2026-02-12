@@ -105,6 +105,9 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         # Grace period: ignore coordinator updates for this many seconds after a command
         self._command_grace_period: float = 30.0
 
+        # Diagnostic: track last service call for debugging UI issues
+        self._last_service_call: dict[str, Any] = {}
+
         # Set icon to speaker (these are passive speaker zones, not active players)
         self._attr_icon = "mdi:speaker"
 
@@ -350,8 +353,14 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "zone_name": self._zone_name,
             "knox_zone_id": self._zone_id,
             "knox_volume_raw": zone_state.volume if zone_state else None,
-            "integration_version": "1.3.0",
+            "integration_version": "1.3.1",
         }
+
+        # Diagnostic: show last service call info
+        if self._last_service_call:
+            attrs["last_service_call"] = self._last_service_call.get("method", "none")
+            if "source" in self._last_service_call:
+                attrs["last_service_call_source"] = self._last_service_call["source"]
 
         # Add input_id if available
         if zone_state and zone_state.input_id is not None:
@@ -361,6 +370,8 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
     async def async_turn_on(self) -> None:
         """Turn the zone on (unmute)."""
+        _LOGGER.info("Zone %d: async_turn_on called", self._zone_id)
+        self._last_service_call = {"method": "turn_on", "time": time.monotonic()}
         try:
             await self._client.set_mute(self._zone_id, False)
             self._last_command_time = time.monotonic()
@@ -374,6 +385,8 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
     async def async_turn_off(self) -> None:
         """Turn the zone off (mute)."""
+        _LOGGER.info("Zone %d: async_turn_off called", self._zone_id)
+        self._last_service_call = {"method": "turn_off", "time": time.monotonic()}
         try:
             await self._client.set_mute(self._zone_id, True)
             self._last_command_time = time.monotonic()
@@ -387,6 +400,8 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
     async def async_set_volume_level(self, volume: float) -> None:
         """Set volume level (0.0 to 1.0)."""
+        _LOGGER.info("Zone %d: async_set_volume_level called volume=%.2f", self._zone_id, volume)
+        self._last_service_call = {"method": "set_volume", "volume": volume, "time": time.monotonic()}
         try:
             # Convert HA volume (0.0-1.0) to Knox volume (0-63, inverted)
             # HA: 0.0=quietest, 1.0=loudest
@@ -408,6 +423,8 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
     async def async_mute_volume(self, mute: bool) -> None:
         """Mute or unmute the zone."""
+        _LOGGER.info("Zone %d: async_mute_volume called mute=%s", self._zone_id, mute)
+        self._last_service_call = {"method": "mute_volume", "mute": mute, "time": time.monotonic()}
         try:
             await self._client.set_mute(self._zone_id, mute)
             self._last_command_time = time.monotonic()
@@ -426,6 +443,8 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
     async def async_select_source(self, source: str) -> None:
         """Select input source."""
+        _LOGGER.info("Zone %d: async_select_source called source='%s'", self._zone_id, source)
+        self._last_service_call = {"method": "select_source", "source": source, "time": time.monotonic()}
         try:
             # Find input ID from source name
             input_id = None
