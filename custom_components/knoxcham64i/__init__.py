@@ -14,6 +14,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .chameleon_client import ChameleonClient, ChameleonError
+from .chameleon_client.models import ZoneState
 from .const import DOMAIN, DEFAULT_PORT, CONF_ZONES, DEFAULT_SCAN_INTERVAL
 
 _LOGGER = logging.getLogger(__name__)
@@ -46,8 +47,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     cached_state: dict[int, Any] = {}
 
     if cached_data and isinstance(cached_data, dict):
-        # Convert string keys back to int (JSON serialization converts int keys to strings)
-        cached_state = {int(k): v for k, v in cached_data.get("zones", {}).items()}
+        # Convert string keys back to int and dicts back to ZoneState objects
+        # (JSON serialization converts dataclasses to dicts and int keys to strings)
+        for k, v in cached_data.get("zones", {}).items():
+            zone_id = int(k)
+            if isinstance(v, dict):
+                cached_state[zone_id] = ZoneState(
+                    zone_id=v.get("zone_id", zone_id),
+                    input_id=v.get("input_id"),
+                    volume=v.get("volume"),
+                    is_muted=v.get("is_muted"),
+                )
+            else:
+                cached_state[zone_id] = v
         cache_age = cached_data.get("timestamp", 0)
         cache_ms = int((time.monotonic() - cache_start) * 1000)
         _LOGGER.info(

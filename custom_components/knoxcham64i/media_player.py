@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from homeassistant.components.media_player import (
@@ -97,6 +98,12 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         # With has_entity_name=True, this creates clean entity IDs like media_player.study
         # Device name comes from zone_name in device_info
         self._attr_name = None
+
+        # Track when the last user command was sent to protect optimistic updates
+        # from being overwritten by stale coordinator refresh data
+        self._last_command_time: float = 0.0
+        # Grace period: ignore coordinator updates for this many seconds after a command
+        self._command_grace_period: float = 30.0
 
         # Set icon to speaker (these are passive speaker zones, not active players)
         self._attr_icon = "mdi:speaker"
@@ -343,7 +350,7 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "zone_name": self._zone_name,
             "knox_zone_id": self._zone_id,
             "knox_volume_raw": zone_state.volume if zone_state else None,
-            "integration_version": "1.2.0",
+            "integration_version": "1.3.0",
         }
 
         # Add input_id if available
@@ -356,22 +363,26 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         """Turn the zone on (unmute)."""
         try:
             await self._client.set_mute(self._zone_id, False)
+            self._last_command_time = time.monotonic()
             # Update local state immediately for responsiveness
-            if self._zone_id in self.coordinator.data:
-                self.coordinator.data[self._zone_id].is_muted = False
+            zone_state = self.coordinator.data.get(self._zone_id)
+            if zone_state is not None:
+                zone_state.is_muted = False
             self.async_write_ha_state()
-        except ChameleonError as err:
+        except Exception as err:
             _LOGGER.error("Failed to turn on zone %d: %s", self._zone_id, err)
 
     async def async_turn_off(self) -> None:
         """Turn the zone off (mute)."""
         try:
             await self._client.set_mute(self._zone_id, True)
+            self._last_command_time = time.monotonic()
             # Update local state immediately for responsiveness
-            if self._zone_id in self.coordinator.data:
-                self.coordinator.data[self._zone_id].is_muted = True
+            zone_state = self.coordinator.data.get(self._zone_id)
+            if zone_state is not None:
+                zone_state.is_muted = True
             self.async_write_ha_state()
-        except ChameleonError as err:
+        except Exception as err:
             _LOGGER.error("Failed to turn off zone %d: %s", self._zone_id, err)
 
     async def async_set_volume_level(self, volume: float) -> None:
@@ -384,11 +395,13 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             knox_volume = max(0, min(63, knox_volume))  # Clamp to valid range
 
             await self._client.set_volume(self._zone_id, knox_volume)
+            self._last_command_time = time.monotonic()
             # Update local state immediately for responsiveness
-            if self._zone_id in self.coordinator.data:
-                self.coordinator.data[self._zone_id].volume = knox_volume
+            zone_state = self.coordinator.data.get(self._zone_id)
+            if zone_state is not None:
+                zone_state.volume = knox_volume
             self.async_write_ha_state()
-        except ChameleonError as err:
+        except Exception as err:
             _LOGGER.error(
                 "Failed to set volume for zone %d: %s", self._zone_id, err
             )
@@ -397,11 +410,13 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         """Mute or unmute the zone."""
         try:
             await self._client.set_mute(self._zone_id, mute)
+            self._last_command_time = time.monotonic()
             # Update local state immediately for responsiveness
-            if self._zone_id in self.coordinator.data:
-                self.coordinator.data[self._zone_id].is_muted = mute
+            zone_state = self.coordinator.data.get(self._zone_id)
+            if zone_state is not None:
+                zone_state.is_muted = mute
             self.async_write_ha_state()
-        except ChameleonError as err:
+        except Exception as err:
             _LOGGER.error(
                 "Failed to %s zone %d: %s",
                 "mute" if mute else "unmute",
@@ -424,11 +439,13 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
                 return
 
             await self._client.set_input(self._zone_id, input_id)
+            self._last_command_time = time.monotonic()
             # Update local state immediately for responsiveness
-            if self._zone_id in self.coordinator.data:
-                self.coordinator.data[self._zone_id].input_id = input_id
+            zone_state = self.coordinator.data.get(self._zone_id)
+            if zone_state is not None:
+                zone_state.input_id = input_id
             self.async_write_ha_state()
-        except ChameleonError as err:
+        except Exception as err:
             _LOGGER.error(
                 "Failed to select source %s for zone %d: %s",
                 source,
@@ -438,5 +455,19 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
+        """Handle updated data from the coordinator.
+
+        Protects optimistic updates from being overwritten by stale refresh data.
+        If a user command was sent recently, we keep our local state for that zone
+        rather than accepting the (potentially stale) coordinator data.
+        """
+        if self._last_command_time > 0:
+            elapsed = time.monotonic() - self._last_command_time
+            if elapsed < self._command_grace_period:
+                _LOGGER.debug(
+                    "Zone %d: skipping coordinator update (%.1fs since last command)",
+                    self._zone_id, elapsed
+                )
+                return
+
         self.async_write_ha_state()

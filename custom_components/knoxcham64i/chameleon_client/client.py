@@ -474,11 +474,15 @@ class ChameleonClient:
         _LOGGER.debug("Zone %d state: %s", zone, state)
         return state
 
-    async def get_all_zones_state(self, zones: List[int]) -> Dict[int, ZoneState]:
+    async def get_all_zones_state(
+        self, zones: List[int], max_refresh_seconds: float = 60.0
+    ) -> Dict[int, ZoneState]:
         """Get state for multiple zones efficiently.
 
         Args:
             zones: List of zone numbers to query
+            max_refresh_seconds: Maximum total time for the refresh cycle.
+                VTB queries are skipped for remaining zones if exceeded.
 
         Returns:
             Dict mapping zone number to ZoneState
@@ -486,9 +490,11 @@ class ChameleonClient:
         Optimized approach:
         1. Fetch crosspoint data ONCE for all zones (D0136)
         2. Parse to get input_id for all zones
-        3. Fetch VTB data concurrently for each zone ($Dxx)
+        3. Fetch VTB data SEQUENTIALLY with a total time budget
         This reduces from 2N commands to 1 + N commands.
         """
+        import time as _time
+        refresh_start = _time.monotonic()
         states = {}
 
         # Step 1: Fetch crosspoint data for all zones 1-36 with a single command
@@ -517,24 +523,42 @@ class ChameleonClient:
         except Exception as err:
             _LOGGER.warning("Failed to fetch crosspoint data: %s", err)
 
-        # Step 2: Fetch VTB data concurrently for each requested zone
-        async def get_vtb_for_zone(zone: int) -> tuple[int, Optional[dict]]:
-            """Fetch VTB data for a single zone."""
+        # Step 2: Fetch VTB data sequentially with a total time budget
+        vtb_map: Dict[int, Optional[str]] = {}  # zone_id -> vtb_data
+        vtb_success = 0
+        vtb_skipped = 0
+
+        for zone in zones:
+            # Check time budget before each query
+            elapsed = _time.monotonic() - refresh_start
+            if elapsed > max_refresh_seconds:
+                vtb_skipped = len(zones) - len(vtb_map)
+                _LOGGER.warning(
+                    "Refresh time budget exceeded (%.1fs > %.1fs), "
+                    "skipping VTB for %d remaining zones",
+                    elapsed, max_refresh_seconds, vtb_skipped
+                )
+                break
+
             try:
                 vtb_command = self._commands.get_vtb(zone)
                 vtb_response = await self._send_command(vtb_command)
                 vtb_result = self._parse_response(vtb_response)
 
                 if vtb_result.get("success") and "data" in vtb_result:
-                    return zone, vtb_result["data"]
+                    vtb_map[zone] = vtb_result["data"]
+                    vtb_success += 1
+                else:
+                    vtb_map[zone] = None
             except Exception as err:
                 _LOGGER.debug("Failed to get VTB for zone %d: %s", zone, err)
+                vtb_map[zone] = None
 
-            return zone, None
-
-        # Fetch VTB data for all zones concurrently
-        vtb_tasks = [get_vtb_for_zone(zone) for zone in zones]
-        vtb_results = await asyncio.gather(*vtb_tasks, return_exceptions=True)
+        elapsed = _time.monotonic() - refresh_start
+        _LOGGER.debug(
+            "VTB queries: %d success, %d failed, %d skipped in %.1fs",
+            vtb_success, len(vtb_map) - vtb_success, vtb_skipped, elapsed
+        )
 
         # Step 3: Build ZoneState objects combining crosspoint + VTB data
         for zone in zones:
@@ -545,13 +569,7 @@ class ChameleonClient:
                 state.input_id = crosspoint_map[zone]
 
             # Add VTB data (volume, mute) if available
-            vtb_data = None
-            for result in vtb_results:
-                if isinstance(result, Exception):
-                    continue
-                if result[0] == zone and result[1] is not None:
-                    vtb_data = result[1]
-                    break
+            vtb_data = vtb_map.get(zone)
 
             if vtb_data:
                 # Parse volume
