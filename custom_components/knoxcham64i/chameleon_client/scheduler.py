@@ -76,6 +76,7 @@ class CommandScheduler:
         self,
         execute_fn: Callable[[str, int], str],
         max_queue_size: int = 100,
+        inter_command_delay: float = 0.0,
     ):
         """Initialize scheduler.
 
@@ -83,8 +84,11 @@ class CommandScheduler:
             execute_fn: Function to execute a command (blocking).
                        Signature: (command: str, trace_id: int) -> str
             max_queue_size: Maximum commands per queue
+            inter_command_delay: Seconds to wait between commands.
+                Gives serial adapters time to reset between TCP connections.
         """
         self._execute_fn = execute_fn
+        self._inter_command_delay = inter_command_delay
         self._high_queue: asyncio.Queue[CommandRequest] = asyncio.Queue(maxsize=max_queue_size)
         self._low_queue: asyncio.Queue[CommandRequest] = asyncio.Queue(maxsize=max_queue_size)
         self._worker_task: Optional[asyncio.Task] = None
@@ -307,6 +311,11 @@ class CommandScheduler:
 
                 finally:
                     self._current_request = None
+
+                # Inter-command delay: let serial adapter reset between connections
+                # Skip delay if HIGH commands are waiting (user responsiveness)
+                if self._inter_command_delay > 0 and self._high_queue.empty():
+                    await asyncio.sleep(self._inter_command_delay)
 
             except asyncio.CancelledError:
                 # Worker cancelled, clean up current request if any

@@ -51,9 +51,12 @@ class ChameleonConnectionBlocking:
         self.max_retries = max_retries
 
         # Create scheduler with our blocking execute function
+        # Inter-command delay gives HF2211A serial adapter time to reset
+        # between TCP connections (critical for reliability)
         self._scheduler = CommandScheduler(
             execute_fn=self._send_command_blocking,
             max_queue_size=100,
+            inter_command_delay=0.5,
         )
         self._scheduler_started = False
 
@@ -105,7 +108,12 @@ class ChameleonConnectionBlocking:
             ChameleonTimeoutError: Command timed out
             ChameleonConnectionError: Connection failed
         """
-        for attempt in range(self.max_retries):
+        # Query commands (VTB, crosspoint) get 1 attempt - fail fast, don't
+        # waste time retrying during refresh. User commands get full retries.
+        is_query = command.startswith("$D") or command.startswith("D")
+        retries = 1 if is_query else self.max_retries
+
+        for attempt in range(retries):
             sock = None
             io_start = time.monotonic()
 
@@ -192,7 +200,7 @@ class ChameleonConnectionBlocking:
                 )
 
                 sock.close()
-                time.sleep(0.1)  # Brief delay for HF2211A buffer clearing
+                time.sleep(0.3)  # Delay for HF2211A serial adapter to release port
 
                 return response
 
