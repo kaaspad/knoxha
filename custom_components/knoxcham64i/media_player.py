@@ -6,6 +6,7 @@ import time
 from typing import Any
 
 from homeassistant.components.media_player import (
+    MediaPlayerDeviceClass,
     MediaPlayerEntity,
     MediaPlayerEntityFeature,
     MediaPlayerState,
@@ -70,6 +71,7 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
 
     _attr_has_entity_name = True
     _attr_should_poll = False  # Coordinator handles polling
+    _attr_device_class = MediaPlayerDeviceClass.SPEAKER
 
     def __init__(
         self,
@@ -328,7 +330,7 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
             "zone_name": self._zone_name,
             "knox_zone_id": self._zone_id,
             "knox_volume_raw": zone_state.volume if zone_state else None,
-            "integration_version": "1.3.3",
+            "integration_version": "1.4.0",
         }
 
         # Diagnostic: show last service call info

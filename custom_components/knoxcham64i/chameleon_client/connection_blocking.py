@@ -200,6 +200,7 @@ class ChameleonConnectionBlocking:
                 )
 
                 sock.close()
+                sock = None
                 time.sleep(0.3)  # Delay for HF2211A serial adapter to release port
 
                 return response
@@ -210,12 +211,7 @@ class ChameleonConnectionBlocking:
                     "cmd id=%d attempt=%d/%d io_ms=%d err=Timeout",
                     trace_id, attempt + 1, self.max_retries, io_ms
                 )
-                if sock:
-                    try:
-                        sock.close()
-                    except:
-                        pass
-                if attempt < self.max_retries - 1:
+                if attempt < retries - 1:
                     # Progressive backoff: 1s, 2s to let device recover
                     backoff = (attempt + 1) * 1.0
                     time.sleep(backoff)
@@ -228,15 +224,18 @@ class ChameleonConnectionBlocking:
                     "cmd id=%d attempt=%d/%d io_ms=%d err=%s",
                     trace_id, attempt + 1, self.max_retries, io_ms, err
                 )
-                if sock:
-                    try:
-                        sock.close()
-                    except:
-                        pass
-                if attempt < self.max_retries - 1:
+                if attempt < retries - 1:
                     time.sleep(0.5)
                     continue
                 raise ChameleonConnectionError(f"Command failed: {err}") from err
+
+            finally:
+                # Always ensure socket is closed to prevent file descriptor leaks
+                if sock is not None:
+                    try:
+                        sock.close()
+                    except Exception:
+                        pass
 
         raise ChameleonConnectionError("Max retries exceeded")
 

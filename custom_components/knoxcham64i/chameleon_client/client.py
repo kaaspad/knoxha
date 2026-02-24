@@ -429,19 +429,10 @@ class ChameleonClient:
                 if 0 <= volume <= 63:
                     state.volume = volume
                 else:
-                    # CRITICAL: Knox reports V:-1 or other invalid values
-                    # Use zone number as fallback to ensure audible audio
-                    # This matches old working code behavior
-                    fallback_volume = min(zone, 40)
-                    _LOGGER.debug("Zone %d has invalid volume %d, using fallback: %d",
-                                  zone, volume, fallback_volume)
-                    state.volume = fallback_volume
+                    _LOGGER.debug("Zone %d has invalid volume %d from device",
+                                  zone, volume)
             else:
-                # No volume found in response, use fallback
-                fallback_volume = min(zone, 40)
-                _LOGGER.debug("Zone %d has no volume in response, using fallback: %d",
-                              zone, fallback_volume)
-                state.volume = fallback_volume
+                _LOGGER.debug("Zone %d has no volume in VTB response", zone)
 
             # Mute
             mute_match = re.search(r'M:(\d+)', vtb_data)
@@ -450,9 +441,7 @@ class ChameleonClient:
                 state.is_muted = (mute_val == 1)
                 _LOGGER.debug("Found mute: %d -> is_muted=%s", mute_val, state.is_muted)
             else:
-                # Default to unmuted if mute state not reported
-                state.is_muted = False
-                _LOGGER.debug("No mute state found, defaulting to unmuted")
+                _LOGGER.debug("No mute state found for zone %d in VTB response", zone)
 
         # Parse crosspoint data
         if cp_result.get("success") and "data" in cp_result:
@@ -475,7 +464,8 @@ class ChameleonClient:
         return state
 
     async def get_all_zones_state(
-        self, zones: List[int], max_refresh_seconds: float = 60.0
+        self, zones: List[int], max_refresh_seconds: float = 60.0,
+        previous_states: Optional[Dict[int, ZoneState]] = None,
     ) -> Dict[int, ZoneState]:
         """Get state for multiple zones efficiently.
 
@@ -483,6 +473,9 @@ class ChameleonClient:
             zones: List of zone numbers to query
             max_refresh_seconds: Maximum total time for the refresh cycle.
                 VTB queries are skipped for remaining zones if exceeded.
+            previous_states: Previous zone states from coordinator.
+                When VTB queries fail, previous values are preserved instead
+                of defaulting to unmuted (which would auto-turn-on zones).
 
         Returns:
             Dict mapping zone number to ZoneState
@@ -496,6 +489,7 @@ class ChameleonClient:
         import time as _time
         refresh_start = _time.monotonic()
         states = {}
+        prev = previous_states or {}
 
         # Step 1: Fetch crosspoint data for all zones 1-36 with a single command
         crosspoint_map = {}  # zone_id -> input_id
@@ -563,10 +557,13 @@ class ChameleonClient:
         # Step 3: Build ZoneState objects combining crosspoint + VTB data
         for zone in zones:
             state = ZoneState(zone_id=zone)
+            prev_state = prev.get(zone)
 
             # Add crosspoint data (input_id) if available
             if zone in crosspoint_map:
                 state.input_id = crosspoint_map[zone]
+            elif prev_state and prev_state.input_id is not None:
+                state.input_id = prev_state.input_id
 
             # Add VTB data (volume, mute) if available
             vtb_data = vtb_map.get(zone)
@@ -579,21 +576,52 @@ class ChameleonClient:
                     if 0 <= volume <= 63:
                         state.volume = volume
                     else:
-                        # Invalid volume, use fallback
-                        state.volume = min(zone, 40)
+                        # Invalid volume - preserve previous if available
+                        if prev_state and prev_state.volume is not None:
+                            state.volume = prev_state.volume
+                            _LOGGER.debug(
+                                "Zone %d: invalid volume %d from device, "
+                                "preserving previous value %d",
+                                zone, volume, prev_state.volume
+                            )
+                        else:
+                            state.volume = min(zone, 40)
                 else:
-                    state.volume = min(zone, 40)
+                    if prev_state and prev_state.volume is not None:
+                        state.volume = prev_state.volume
+                    else:
+                        state.volume = min(zone, 40)
 
                 # Parse mute
                 mute_match = re.search(r'M:(\d+)', vtb_data)
                 if mute_match:
                     state.is_muted = (int(mute_match.group(1)) == 1)
                 else:
-                    state.is_muted = False
+                    # No mute field in response - preserve previous state
+                    if prev_state and prev_state.is_muted is not None:
+                        state.is_muted = prev_state.is_muted
+                    else:
+                        state.is_muted = False
             else:
-                # No VTB data, use defaults
-                state.volume = min(zone, 40)
-                state.is_muted = False
+                # No VTB data - preserve previous state instead of defaulting
+                # to unmuted (which would auto-turn-on muted zones)
+                if prev_state:
+                    if prev_state.volume is not None:
+                        state.volume = prev_state.volume
+                    if prev_state.is_muted is not None:
+                        state.is_muted = prev_state.is_muted
+                    _LOGGER.debug(
+                        "Zone %d: VTB query failed, preserving previous state "
+                        "(volume=%s, muted=%s)",
+                        zone, state.volume, state.is_muted
+                    )
+                else:
+                    # No previous state at all (first poll) - leave as None
+                    # which will show as "Unknown" in HA until a successful poll
+                    _LOGGER.warning(
+                        "Zone %d: VTB query failed and no previous state available",
+                        zone
+                    )
 
             states[zone] = state
 

@@ -51,7 +51,7 @@ class CommandRequest:
     priority: Priority
     trace_id: int = field(default_factory=lambda: next(_trace_counter))
     queued_at: float = field(default_factory=time.monotonic)
-    future: asyncio.Future = field(default_factory=lambda: asyncio.get_event_loop().create_future())
+    future: asyncio.Future = field(default_factory=lambda: asyncio.get_running_loop().create_future())
 
     def set_result(self, result: str) -> None:
         """Set the command result."""
@@ -254,7 +254,7 @@ class CommandScheduler:
                     io_start = time.monotonic()
 
                     # Run blocking I/O in executor
-                    loop = asyncio.get_event_loop()
+                    loop = asyncio.get_running_loop()
                     result = await loop.run_in_executor(
                         self._executor_pool,
                         self._execute_fn,

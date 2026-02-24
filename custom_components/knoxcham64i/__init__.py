@@ -124,7 +124,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
             # Fetch state for all zones
             # VTB queries go into LOW queue and yield to HIGH commands automatically
-            states = await client.get_all_zones_state(zone_ids)
+            # Pass previous state so failed VTB queries preserve mute/volume
+            # instead of defaulting to unmuted (which auto-turns-on zones)
+            previous_states = coordinator.data if coordinator.data else None
+            states = await client.get_all_zones_state(
+                zone_ids, previous_states=previous_states
+            )
 
             refresh_ms = int((time.monotonic() - refresh_start) * 1000)
             _LOGGER.info(
