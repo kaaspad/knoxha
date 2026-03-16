@@ -114,17 +114,12 @@ class ChameleonMediaPlayer(CoordinatorEntity, MediaPlayerEntity, RestoreEntity):
         self._attr_icon = "mdi:speaker"
 
         # Set supported features
-        # NOTE: SELECT_SOURCE intentionally omitted. The HA frontend's
-        # ha-dropdown component (based on webawesome Dropdown) has a bug
-        # where the wa-select event never fires, making the media player
-        # more-info source dropdown non-functional. Source selection is
-        # handled by the companion select entity (select.py) which uses
-        # the working ha-select component instead.
         self._attr_supported_features = (
             MediaPlayerEntityFeature.TURN_ON
             | MediaPlayerEntityFeature.TURN_OFF
             | MediaPlayerEntityFeature.VOLUME_SET
             | MediaPlayerEntityFeature.VOLUME_MUTE
+            | MediaPlayerEntityFeature.SELECT_SOURCE
         )
 
     async def async_added_to_hass(self) -> None:
