@@ -203,7 +203,11 @@ class ChameleonClient:
         """
         self._commands.validate_zone(zone)
 
-        command = self._commands.get_crosspoint(zone)
+        # Use appropriate range query based on zone number
+        if zone <= 36:
+            command = self._commands.get_crosspoint(zone)
+        else:
+            command = self._commands.get_crosspoint_range(37, min(64, zone))
         response = await self._send_command(command)
         result = self._parse_response(response)
 
@@ -408,7 +412,10 @@ class ChameleonClient:
         vtb_result = self._parse_response(vtb_response)
 
         # Fetch crosspoint data (input routing)
-        cp_command = self._commands.get_crosspoint(zone)
+        if zone <= 36:
+            cp_command = self._commands.get_crosspoint(zone)
+        else:
+            cp_command = self._commands.get_crosspoint_range(37, min(64, zone))
         cp_response = await self._send_command(cp_command)
         cp_result = self._parse_response(cp_response)
 
@@ -464,7 +471,7 @@ class ChameleonClient:
         return state
 
     async def get_all_zones_state(
-        self, zones: List[int], max_refresh_seconds: float = 60.0,
+        self, zones: List[int], max_refresh_seconds: float = 90.0,
         previous_states: Optional[Dict[int, ZoneState]] = None,
     ) -> Dict[int, ZoneState]:
         """Get state for multiple zones efficiently.
@@ -491,38 +498,60 @@ class ChameleonClient:
         states = {}
         prev = previous_states or {}
 
-        # Step 1: Fetch crosspoint data for all zones 1-36 with a single command
+        # Step 1: Fetch crosspoint data for all configured zones
+        # D0136 covers zones 1-36; zones > 36 need additional range queries
         crosspoint_map = {}  # zone_id -> input_id
-        try:
-            cp_command = self._commands.get_crosspoint(1)  # Returns D0136
-            cp_response = await self._send_command(cp_command)
-            cp_result = self._parse_response(cp_response)
+        max_zone = max(zones) if zones else 36
 
-            if cp_result.get("success") and "data" in cp_result:
-                cp_data = cp_result["data"]
-                lines = cp_data.split('\n')
+        # Determine which crosspoint ranges to query
+        cp_ranges = [(1, min(36, max_zone))]  # Always query 1-36 (or less)
+        if max_zone > 36:
+            cp_ranges.append((37, min(64, max_zone)))
 
-                for line in lines:
-                    if line.strip().startswith("OUTPUT"):
-                        parts = line.split()
-                        if len(parts) >= 6:
-                            try:
-                                output_num = int(parts[1])
-                                video_input = int(parts[3])
-                                crosspoint_map[output_num] = video_input
-                            except (ValueError, IndexError):
-                                continue
+        for start_z, end_z in cp_ranges:
+            try:
+                if start_z == 1 and end_z == 36:
+                    cp_command = self._commands.get_crosspoint(1)
+                else:
+                    cp_command = self._commands.get_crosspoint_range(start_z, end_z)
+                cp_response = await self._send_command(cp_command)
+                cp_result = self._parse_response(cp_response)
 
-                _LOGGER.debug("Fetched crosspoint data for %d zones in one command", len(crosspoint_map))
-        except Exception as err:
-            _LOGGER.warning("Failed to fetch crosspoint data: %s", err)
+                if cp_result.get("success") and "data" in cp_result:
+                    cp_data = cp_result["data"]
+                    lines = cp_data.split('\n')
+
+                    for line in lines:
+                        if line.strip().startswith("OUTPUT"):
+                            parts = line.split()
+                            if len(parts) >= 6:
+                                try:
+                                    output_num = int(parts[1])
+                                    video_input = int(parts[3])
+                                    crosspoint_map[output_num] = video_input
+                                except (ValueError, IndexError):
+                                    continue
+
+                _LOGGER.debug(
+                    "Fetched crosspoint data for range %d-%d: %d zones",
+                    start_z, end_z,
+                    sum(1 for z in crosspoint_map if start_z <= z <= end_z)
+                )
+            except Exception as err:
+                _LOGGER.warning("Failed to fetch crosspoint data for range %d-%d: %s", start_z, end_z, err)
 
         # Step 2: Fetch VTB data sequentially with a total time budget
+        # Prioritize zones without previous state (new zones) so they don't
+        # get starved by timeouts on earlier zones
         vtb_map: Dict[int, Optional[str]] = {}  # zone_id -> vtb_data
         vtb_success = 0
         vtb_skipped = 0
 
-        for zone in zones:
+        zones_without_prev = [z for z in zones if z not in prev or prev[z].is_muted is None]
+        zones_with_prev = [z for z in zones if z in prev and prev[z].is_muted is not None]
+        vtb_query_order = zones_without_prev + zones_with_prev
+
+        for zone in vtb_query_order:
             # Check time budget before each query
             elapsed = _time.monotonic() - refresh_start
             if elapsed > max_refresh_seconds:

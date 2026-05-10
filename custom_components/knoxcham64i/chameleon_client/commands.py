@@ -84,6 +84,19 @@ class ChameleonCommands:
         # Parser will extract the specific zone from the response
         return "D0136"
 
+    @staticmethod
+    def get_crosspoint_range(start_zone: int, end_zone: int) -> str:
+        """Get crosspoint (input routing) for a specific zone range.
+
+        Command: Dxxyy
+        - D = Display/Dump crosspoint
+        - xx = start zone (01-64)
+        - yy = end zone (01-64)
+
+        Used to query zones beyond 36 (e.g., D3764 for zones 37-64).
+        """
+        return f"D{start_zone:02d}{end_zone:02d}"
+
     # ========================================================================
     # VOLUME, TONE, BALANCE (VTB) COMMANDS (Section 3.4, page 17)
     # ========================================================================
