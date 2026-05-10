@@ -10,6 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PORT, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers.device_registry import DeviceEntry
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -251,3 +252,30 @@ async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         # Just notify entities to update their state (no polling needed)
         _LOGGER.info("Only inputs changed, notifying entities without polling")
         coordinator.async_set_updated_data(coordinator.data)
+
+
+async def async_remove_config_entry_device(
+    hass: HomeAssistant, config_entry: ConfigEntry, device_entry: DeviceEntry
+) -> bool:
+    """Allow removal of orphaned devices (zones removed from config)."""
+    # Only allow removal if the zone is no longer in the config
+    zone_ids = {zone["id"] for zone in config_entry.data.get(CONF_ZONES, [])}
+
+    # Check device identifiers to find the zone_id
+    for identifier in device_entry.identifiers:
+        if identifier[0] == DOMAIN:
+            # Identifier format: "entry_id_zone_id"
+            parts = identifier[1].rsplit("_", 1)
+            if len(parts) == 2:
+                try:
+                    device_zone_id = int(parts[1])
+                    if device_zone_id not in zone_ids:
+                        _LOGGER.info(
+                            "Allowing removal of orphaned device for zone %d",
+                            device_zone_id
+                        )
+                        return True
+                except ValueError:
+                    pass
+
+    return False
